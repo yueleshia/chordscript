@@ -19,19 +19,18 @@ macro_rules! reexport {
     };
 }
 
-reexport!(keyspace_preview::KeyspacePreview); // Default printer
-reexport!(list_preview::{ListDebug, ListPreview, ListIter, ListChord}); // Default printer
-reexport!(shellscript::Shellscript); // For external file to be used by others
-
-reexport!(i3::I3); // No way to escape newlines, so should avoid this
-reexport!(i3_shell::I3Shell);
+//reexport!(keyspace_preview::KeyspacePreview); // Default printer
+reexport!(list_preview::{ListAll, ListReal}); // Default printer
+//reexport!(shellscript::Shellscript); // For external file to be used by others
+//
+//reexport!(i3::I3); // No way to escape newlines, so should avoid this
+//reexport!(i3_shell::I3Shell);
 // @TODO leftwm
 // @TODO sxhkd
 // @TODO dwm
 // @TODO external shellscript that handles adapting for us
 
 use std::cmp;
-
 use crate::structs::{Chord, Cursor, WithSpan};
 
 //run: cargo run -- shortcuts -c $HOME/interim/hk/config.txt
@@ -252,7 +251,7 @@ impl<'list, 'filestr> Print for EscapedStr<'list, 'filestr> {
         let Self(candidates, escape, substr_span) = self;
         debug_assert_eq!(candidates.len(), escape.len());
 
-        let mut iter = DelimSplit::new(substr_span.as_str(), candidates);
+        let mut iter = DelimSplit::new(substr_span.source, candidates);
         let (_, first) = iter.next().unwrap();
 
         let mut char_to_str = [0u8; 4];
@@ -286,10 +285,10 @@ impl<'list, 'filestr> Print for TrimEscapeStrList<'list, 'filestr> {
         let Self(quote, candidates, escape, original) = self;
         // Find the indices that contain non-whitespace entries
         let begin = original.iter()
-            .position(|s| !s.as_str().trim_start().is_empty())
+            .position(|s| !s.source.trim_start().is_empty())
             .unwrap_or(if original.is_empty() { 0 } else { original.len() - 1 });
         let close = original.iter()
-            .rposition(|s| !s.as_str().trim_end().is_empty())
+            .rposition(|s| !s.source.trim_end().is_empty())
             .unwrap_or(0);
         debug_assert!(begin <= close);
 
@@ -312,11 +311,21 @@ impl<'list, 'filestr> Print for TrimEscapeStrList<'list, 'filestr> {
 
         // Have to own the span here
         let first = iter.next().map(|span| {
-            let s = span.as_str();
-            respan_to(span, if trimmed_len < 2 { s.trim() } else { s.trim_start() })
+            let s = span.source;
+            WithSpan {
+                data: (),
+                context: span.context,
+                source: if trimmed_len < 2 { s.trim() } else { s.trim_start() },
+            }
+            //respan_to(span, if trimmed_len < 2 { s.trim() } else { s.trim_start() })
         });
         let finis = if begin != close {
-            Some(respan_to(&original[close], original[close].as_str().trim_end()))
+            Some (WithSpan {
+                data: (),
+                context: original[close].context,
+                source: original[close].source.trim_end(),
+            })
+            //Some(respan_to(&original[close], original[close].as_str().trim_end()))
         } else {
             None
         };
@@ -352,14 +361,14 @@ impl<'list, 'filestr> Print for TrimEscapeStrList<'list, 'filestr> {
 
 pub struct DeserialisedChord<'list, 'filestr>(
     &'static str,
-    &'list WithSpan<'filestr, Chord>,
+    &'list Chord<'filestr>,
     &'static [&'static str],
     &'static [&'static str],
 );
 impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
-        let DeserialisedChord(delim, chord_span, keycodes, modifiers) = self;
-        let Chord { key, modifiers: mods } = chord_span.data;
+        let DeserialisedChord(delim, chord, keycodes, modifiers) = self;
+        let Chord { key, modifiers: mods, .. } = chord;
         let mut mod_iter = modifiers.iter().enumerate()
             .filter(|(i, _)| mods & (1 << i) != 0);
         let first = mod_iter.next();
@@ -377,15 +386,15 @@ impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
 
 
         // Then the key itself
-        if key < keycodes.len() {
-            keycodes[key].len() + if first.is_some() { delim.len() } else { 0 }
+        if *key < keycodes.len() {
+            keycodes[*key].len() + if first.is_some() { delim.len() } else { 0 }
         } else {
             0
-        } => if key < keycodes.len() {
+        } => if *key < keycodes.len() {
              if first.is_some() {
                  buffer.push_str(delim);
              }
-             buffer.push_str(keycodes[key]);
+             buffer.push_str(keycodes[*key]);
         };
     });
 }
@@ -393,21 +402,21 @@ impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
 /****************************************************************************
  * Helper functions
  ****************************************************************************/
-pub fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
-    (substr.as_ptr() as usize) - (source.as_ptr() as usize)
-}
+//pub fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
+//    (substr.as_ptr() as usize) - (source.as_ptr() as usize)
+//}
 
-fn respan_to<'list, 'filestr>(
-    substr_span: &'list WithSpan<'filestr, ()>,
-    target_substr: &'filestr str,
-) -> WithSpan<'filestr, ()> {
-    let offset = index_of_substr(substr_span.context, target_substr);
-    WithSpan {
-        data: (),
-        context: substr_span.context,
-        range: offset..offset + target_substr.len(),
-    }
-}
+//fn respan_to<'list, 'filestr>(
+//    substr_span: &'list WithSpan<'filestr, ()>,
+//    target_substr: &'filestr str,
+//) -> WithSpan<'filestr, ()> {
+//    let offset = index_of_substr(substr_span.context, target_substr);
+//    WithSpan {
+//        data: (),
+//        context: substr_span.context,
+//        range: offset..offset + target_substr.len(),
+//    }
+//}
 
 struct DelimSplit<'a, 'b> {
     source: &'a str,

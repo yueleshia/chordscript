@@ -1,93 +1,73 @@
 use crate::constants::{KEYCODES, MODIFIERS};
-use crate::deserialise::{TrimEscapeStrList, Print};
+use crate::deserialise::{Print, TrimEscapeStrList};
 use crate::parser::ShortcutOwner;
-use crate::structs::{Chord, Shortcut, WithSpan};
-use crate::{array, precalculate_capacity_and_build};
+use crate::precalculate_capacity_and_build;
+use crate::structs::{Chord, Shortcut};
+use super::DeserialisedChord;
 
-pub struct ListDebug<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
-pub struct ListPreview<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
-pub struct ListChord<'parsemes, 'filestr>(pub &'parsemes WithSpan<'filestr, Chord>);
-pub struct ListIter<'parsemes, 'filestr: 'parsemes, T>(pub T)
-    where T:  Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone;
+pub struct ListAll<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
+pub struct ListReal<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
+struct ListShortcut<'shortcuts, 'filestr>(Shortcut<'shortcuts, 'filestr>);
+//pub struct ListIter<'parsemes, 'filestr: 'parsemes, T>(pub T)
+//    where T:  Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone;
 
 const QUOTE: char = '\'';
 const CANDIDATES: [char; 1] = ['\''];
 const ESCAPE: [&str; 1] = ["'\\''"];
 
-impl<'parsemes, 'filestr> Print for ListDebug<'parsemes, 'filestr> {
-    precalculate_capacity_and_build!(self, buffer {} {
+// Mostly for the standard dump to STDOUT for debuging your config
+impl<'parsemes, 'filestr> Print for ListAll<'parsemes, 'filestr> {
+    precalculate_capacity_and_build!(self, buffer {
+        let placeholders = self.0.to_placeholder_iter();
+        let reals = self.0.to_iter();
+    } {
         13 => buffer.push_str("Placeholders\n");
         11 => buffer.push_str("==========\n");
-        ListIter(self.0.to_placeholder_iter()).string_len() =>
-            ListIter(self.0.to_placeholder_iter()).push_string_into(buffer);
+        placeholders.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
+            => placeholders.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
 
         1 => buffer.push('\n');
 
         15 => buffer.push_str("Real Shortcuts\n");
         11 => buffer.push_str("==========\n");
-        ListIter(self.0.to_iter()).string_len() =>
-            ListIter(self.0.to_iter()).push_string_into(buffer);
+        reals.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
+            => reals.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
     });
 }
 
-impl<'parsemes, 'filestr> Print for ListPreview<'parsemes, 'filestr> {
+// The same as 'ListAllUnsorted' but without the placeholders
+impl<'parsemes, 'filestr> Print for ListReal<'parsemes, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {} {
-        ListIter(self.0.to_iter()).string_len() =>
-            ListIter(self.0.to_iter()).push_string_into(buffer);
+        15 => buffer.push_str("Real Shortcuts\n");
+        11 => buffer.push_str("==========\n");
+        self.0.to_iter().map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
+            => self.0.to_iter().for_each(|sc| ListShortcut(sc).push_string_into(buffer));
     });
 }
 
-impl<'parsemes, 'filestr, T> Print for ListIter<'parsemes, 'filestr, T>
-    where T: Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone
-{
-    precalculate_capacity_and_build!(self, buffer {} {
-        self.0.clone().map(|Shortcut { hotkey, command }| {
-            1
-            + array!(@len_join { hotkey } |> ListChord, " ; ")
-            + 1
-            + TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).string_len()
-            + 1
-        }).sum::<usize>() => self.0.clone().for_each(|Shortcut { hotkey, command }| {
-            buffer.push('|');
-            array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
-            buffer.push('|');
-            TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).push_string_into(buffer);
-            buffer.push('\n');
-        });
-    });
-}
-
-impl<'parsemes, 'filestr> Print for ListChord<'parsemes, 'filestr> {
+impl<'shortcuts, 'filestr> Print for ListShortcut<'shortcuts, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
-        let Chord { key, modifiers } = self.0.data;
-        let mut mod_iter = MODIFIERS.iter().enumerate()
-            .filter(|(i, _)| modifiers & (1 << i) != 0);
-        let space = ' ';
-        debug_assert!(space.len_utf8() == 1);
-        let first = mod_iter.next();
+        let Shortcut { hotkey, command } = self.0;
+        let mut hotkey = hotkey.iter();
+        let first = hotkey.next().unwrap();
     } {
-        // Process the first element separately to simulate a join()
-        first.map(|(_, mod_str)| mod_str.len()).unwrap_or(0) =>
-            if let Some((_, mod_str)) = first {
-                buffer.push_str(mod_str);
-            };
-        mod_iter.map(|(_, mod_str)| mod_str.len() + 1).sum::<usize>() =>
-            mod_iter.for_each(|(_, mod_str)| {
-                buffer.push(space);
-                buffer.push_str(mod_str);
+        1 => buffer.push('|');
+        wrap_chord(first).string_len() => wrap_chord(first).push_string_into(buffer);
+        hotkey.map(|chord| wrap_chord(chord).string_len() + 3).sum::<usize>()
+            => hotkey.for_each(|chord| {
+                buffer.push_str(" ; ");
+                wrap_chord(chord).push_string_into(buffer);
             });
+        1 => buffer.push('|');
+        1 => buffer.push(' ');
 
-
-        // Then the key itself
-        if key < KEYCODES.len() {
-            KEYCODES[key].len() + if first.is_some() { 1 } else { 0 }
-        } else {
-            0
-        } => if key < KEYCODES.len() {
-             if first.is_some() {
-                 buffer.push(space);
-             }
-             buffer.push_str(KEYCODES[key]);
-         };
+        TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).string_len()
+            => TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).push_string_into(buffer);
+        1 => buffer.push('\n');
     });
+}
+
+#[inline]
+fn wrap_chord<'a, 'b>(chord: &'a Chord<'b>) -> DeserialisedChord<'a, 'b> {
+    DeserialisedChord(" ", chord, &KEYCODES, &MODIFIERS)
 }

@@ -7,7 +7,7 @@
 #![feature(or_patterns)]
 
 mod constants;
-//mod deserialise;
+mod deserialise;
 mod errors;
 //mod keyspace;
 mod lexer;
@@ -16,7 +16,7 @@ mod parser;
 //mod reporter;
 mod structs;
 
-//use deserialise::Print;
+use deserialise::Print;
 use std::fs;
 use std::io::{self, Write};
 
@@ -67,9 +67,9 @@ macro_rules! subcommands {
         let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
             .map_err(Errors::Cli)?;
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        let _lex_data = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
-        _lex_data.lexemes.iter().for_each(|lexeme| println!("- {:?}", lexeme));
-        let _parser = parser::parse(_lex_data);
+        let lexemes = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
+        //let _parser = parser::parse(lexemes);
+        let mut $shortcuts = parser::parse(lexemes);
         //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
         //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
     };
@@ -80,16 +80,15 @@ macro_rules! subcommands {
     ) => {
         let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
             .map_err(Errors::Cli)?;
-        let _file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        //let (_lexemes, _parse_size) = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
-        //lexemes.iter().for_each(|lexeme| println!("- {:?}", lexeme));
-        //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
-        //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
+        let lexemes = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
+        let mut $shortcuts = parser::parse(lexemes);
+        //let $shortcuts = parser::process(lexemes).map_err(Errors::Parse)?;
         //let $keyspaces = keyspace::process(&$shortcuts);
     };
 }
 
-//run: cargo run -- shortcuts-debug --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
+//run: cargo run -- shortcuts --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
 fn parse_args(args: &[String]) -> Result<(), Errors> {
     let program = &args[0];
     let args = &args[1..];
@@ -117,10 +116,11 @@ fn parse_args(args: &[String]) -> Result<(), Errors> {
                 //println!("{}", buffer);
             }
             "shortcuts" @shortcuts (true, false) => {
-                //println!("{}", deserialise::ListPreview(&shortcuts).to_string_custom());
+                shortcuts.sort();
+                println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
             }
-            "shortcuts-debug" @shortcuts (true, false) => {
-                //println!("{}", deserialise::ListDebug(&shortcuts).to_string_custom());
+            "shortcuts-all-debug" @shortcuts (true, false) => {
+                println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
             }
             "keyspaces" @keyspaces (true, false) => {
                 //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
