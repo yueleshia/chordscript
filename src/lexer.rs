@@ -1,4 +1,4 @@
-//run: cargo test
+//run: cargo test -- --nocapture
 
 use crate::constants::SEPARATOR;
 use crate::reporter::MarkupError;
@@ -421,7 +421,13 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             let frag = fsm.emit_b_member(&fsm.original[before_comma]);
             fsm.cursor.move_to(fsm.walker.post); // After ','
             fsm.member_num += 1; // @VOLATILE: ensure this is after emit
-            frag
+            if fsm.max_permutes.1 > fsm.max_permutes.0 {
+                fsm.walker.error_at_current("\
+                    The body cannot have more permutations than the head.\
+                ")
+            } else {
+                frag
+            }
         }
         ('}', Some('}')) => {
             let before_bracket = fsm.cursor.span_to(fsm.walker.prev);
@@ -585,16 +591,20 @@ impl<'a> Fsm<'a> {
 
     #[inline]
     fn calculate_entry_size(&mut self) {
+        debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
+        debug_assert!(self.max_permutes.0 >= self.max_permutes.1);
+
         //print!("{:?} {} ", self.chord_count, self.max_permutes.0);
         //print!("{:?} {} ", self.body_count, self.max_permutes.1);
         let s = (
             self.chord_count.0 * self.max_permutes.0 + self.chord_count.1,
-            self.body_count.0 * self.max_permutes.1 + self.body_count.1,
+            self.body_count.0 * self.max_permutes.0 + self.body_count.1,
         );
+        //println!("{:?}", self.entry_stats.iter().fold((s.0, s.1), |(h, b), e| {
+        //    (h + e.head_size, b + e.body_size)
+        //}));
 
         // Only possibly equal after push for the last entry
-        debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
-        debug_assert!(self.max_permutes.0 >= self.max_permutes.1);
         self.entry_stats.push(PostLexEntry {
             is_placeholder: self.is_placeholder,
             head_size: s.0,
@@ -609,8 +619,7 @@ impl<'a> Fsm<'a> {
         });
 
         self.entry_head_index = self.fragment_len;
-        self.max_permutes.0 = 1;
-        self.max_permutes.1 = 1;
+        self.max_permutes = (1, 1);
         self.chord_count = (0, 0);
         self.body_count = (0, 0);
     }
