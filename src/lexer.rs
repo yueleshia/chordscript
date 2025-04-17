@@ -1,4 +1,5 @@
 use crate::constants::SEPARATOR;
+
 use std::mem::{replace, swap};
 
 // For escaping during the lexer phase, State::BEscape
@@ -63,11 +64,11 @@ pub fn lex(input: &str) -> Result<LexOutput, String> {
         fragment_len: 0,
         entry_head_index: 0,
         entry_body_index: 0,
-        member_num: 0,
-        member_h_max: 0,
-        member_b_max: 0,
-        h_group_size: (0, 0),
-        b_group_size: (0, 0),
+        member_num: 0,        // index for HChoice/BChoice (to `filter()` on in parser)
+        max_permutes: (0, 0), // (head max, body max)
+
+        chord_count: (0, 0), // (outside, inside) permute group '{{' '}}'
+        body_count: (0, 0),
     };
 
     jump_init(&mut fsm)?;
@@ -153,14 +154,15 @@ struct Fsm<'a> {
 
     // See second impl block for explanation of the math
     entry_stats: Vec<PostLexEntry>,
-    fragment_len: usize,
+    fragment_len: usize, // Number of lexemes we have emitted
     entry_head_index: usize,
     entry_body_index: usize,
     member_num: usize,
-    member_h_max: usize,
-    member_b_max: usize,
-    h_group_size: (usize, usize), // left for in all permutations
-    b_group_size: (usize, usize), // right for only certain permutations
+    max_permutes: (usize, usize),
+
+    // Counts (outside, inside) permute group '{{' '}}'
+    chord_count: (usize, usize), // This follows ';' and '|'/'!'
+    body_count: (usize, usize),  // This follows ',' and '}}'
 }
 
 /******************************************************************************
@@ -315,7 +317,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
             fsm.walker.next(); // Skip second '}'
             fsm.walker.eat_separator();
-            fsm.member_h_max = fsm.member_h_max.max(fsm.member_num + 1);
+            fsm.max_permutes.0 = fsm.max_permutes.0.max(fsm.member_num + 1);
             fsm.cursor.move_to(fsm.walker.post); // After second '}'
             fsm.emit_h_choice(&fsm.original[before_bracket])
         }
@@ -423,7 +425,7 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
             fsm.walker.next(); // Skip the second '}'
             fsm.change_state(State::Body);
-            fsm.member_b_max = fsm.member_b_max.max(fsm.member_num + 1);
+            fsm.max_permutes.1 = fsm.max_permutes.1.max(fsm.member_num + 1);
             fsm.cursor.move_to(fsm.walker.post); // After '}'
             fsm.emit_b_member(&fsm.original[before_bracket])
         }
@@ -477,6 +479,7 @@ impl<'a> Fsm<'a> {
                     .fmt_err(format!("Invalid state transition {:?} -> {:?}", a, b).as_str())
             ),
         }
+
         self.old_state = replace(&mut self.state, target_state);
     }
 
@@ -493,75 +496,82 @@ impl<'a> Fsm<'a> {
 // Although they are all only called once or twice, these consolidate the math
 //
 // There are three calculations:
-// 1. The number of members in brackets groups '{{' '}}' ('member_h_max',
-//    'member_b_max'). This is measuring the fattest bracket group
-// 2. The count for size required by the parser ('h_group_size', 'b_group_size')
+// 1. The number of members in brackets groups '{{' '}}' ('max_permutes.0',
+//    'max_permutes.1'). This is measuring the fattest bracket group
+// 2. The count for size required by the parser ('chord_count', 'body_count')
 //    For head, this measures conservatively along chord boundaries
 //    For body, we can get exact measures
-// 3. Member num (the index of the variant of the permutation) is handled
+// 3. 'member_num' (the index of the variant of the permutation) is handled
 //    in each 'step_()' function
 macro_rules! define_emitter {
-    ($($fn:ident ($self:ident, $frag:ident ) $expr:expr )*) => {
+    ($($(@$check_empty:ident)? $fn:ident ($self:ident, $frag:ident )
+        $expr:expr
+    )*) => {
         $(
             #[inline]
             fn $fn(&mut $self, $frag: &'a str) -> PassOutput<'a> {
-                if $frag.is_empty() {
-                    Ok(None)
-                } else {
-                    $self.fragment_len += 1;
-                    $expr
-                }
+                $(define_emitter!(@$check_empty $frag);)?
+                $self.fragment_len += 1;
+                $expr
             }
         )*
     };
+    (@check_frag_empty $frag:ident) => {
+        if $frag.is_empty() {
+            return Ok(None);
+        }
+
+    };
+    ($frag:ident) => {};
 }
 impl<'a> Fsm<'a> {
     define_emitter! {
         // Outside of head/placeholder '{{' and '}}'
-        emit_head(self, frag) Ok(Some(Lexeme::Key(frag)))
+        @check_frag_empty emit_head(self, frag)
+            Ok(Some(Lexeme::Key(frag)))
         // Inside of '{{' and '}}'
-        emit_h_choice(self, frag) Ok(Some(Lexeme::HChoice(self.member_num, frag)))
+        @check_frag_empty emit_h_choice(self, frag)
+            Ok(Some(Lexeme::HChoice(self.member_num, frag)))
+
+
+        // Before closing '!', closing '|', and ';'
+        emit_h_chord(self, frag) {
+            debug_assert!(frag == "|" || frag == "!" || frag == ";");
+            self.chord_count.0 += 1;
+            Ok(Some(Lexeme::ChordDelimH(frag)))
+        }
+        emit_hc_chord(self, frag) {
+            debug_assert!(frag == ";");
+            self.chord_count.1 += 1;
+            Ok(Some(Lexeme::ChordDelimHC(self.member_num, frag)))
+        }
+
+
+
 
         // Outside of body '{{' and '}}'
-        emit_body(self, frag) {
-            self.b_group_size.0 += 1;
+        @check_frag_empty emit_body(self, frag) {
+            self.body_count.0 += 1;
             Ok(Some(Lexeme::Literal(frag)))
         }
         // Inside of body '{{' and '}}', when not before ','
-        emit_b_choice(self, frag) {
-            self.b_group_size.1 += 1;
+        @check_frag_empty emit_b_choice(self, frag) {
+            self.body_count.1 += 1;
             Ok(Some(Lexeme::BChoice(self.member_num, frag)))
         }
-    }
-    // Before closing '!', closing '|', and ';'
-    #[inline]
-    fn emit_h_chord(&mut self, frag: &'a str) -> PassOutput<'a> {
-        debug_assert!(frag == "|"  || frag == "!" || frag == ";");
-        self.fragment_len += 1;
-        self.h_group_size.0 += 1;
-        Ok(Some(Lexeme::ChordDelimH(frag)))
-    }
-    #[inline]
-    fn emit_hc_chord(&mut self, frag: &'a str) -> PassOutput<'a> {
-        debug_assert!(frag == ";");
-        self.fragment_len += 1;
-        self.h_group_size.1 += 1;
-        Ok(Some(Lexeme::ChordDelimHC(self.member_num, frag)))
-    }
-
-    // Inside of body '{{' and '}}', when before ','
-    #[inline]
-    fn emit_b_member(&mut self, frag: &'a str) -> PassOutput<'a> {
-        if self.member_num > self.member_h_max {
-            Err(self.walker.fmt_err(
-                "The number of body permutations cannot exceed the number \
-                of head permutations.\n\
-                Either delete the highlighted body portion or add more \
-                options for the head.\n\
-                If you want a comma as a text, you escape like '\\,'.",
-            ))
-        } else {
-            self.emit_b_choice(frag)
+        // Inside of body '{{' and '}}', when before ','
+        @check_frag_empty emit_b_member(self, frag) {
+            if self.member_num > self.max_permutes.0 {
+                return Err(self.walker.fmt_err(
+                    "The number of body permutations cannot exceed the number \
+                    of head permutations.\n\
+                    Either delete the highlighted body portion or add more \
+                    options for the head.\n\
+                    If you want a comma as a text, you escape like '\\,'.",
+                ))
+            }
+            self.body_count.1 += 1;
+            Ok(Some(Lexeme::BChoice(self.member_num, frag)))
         }
     }
 
@@ -572,16 +582,16 @@ impl<'a> Fsm<'a> {
 
     #[inline]
     fn calculate_entry_size(&mut self) {
-        //print!("{:?} {} ", self.h_group_size, self.member_h_max);
-        //print!("{:?} {} ", self.b_group_size, self.member_b_max);
+        //print!("{:?} {} ", self.chord_count, self.max_permutes.0);
+        //print!("{:?} {} ", self.body_count, self.max_permutes.1);
         let s = (
-            self.h_group_size.0 * self.member_h_max + self.h_group_size.1,
-            self.b_group_size.0 * self.member_b_max + self.b_group_size.1,
+            self.chord_count.0 * self.max_permutes.0 + self.chord_count.1,
+            self.body_count.0 * self.max_permutes.1 + self.body_count.1,
         );
 
         // Only possibly equal after push for the last entry
         debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
-        debug_assert!(self.member_h_max >= self.member_b_max);
+        debug_assert!(self.max_permutes.0 >= self.max_permutes.1);
         self.entry_stats.push(PostLexEntry {
             is_placeholder: self.is_placeholder,
             head_size: s.0,
@@ -589,17 +599,17 @@ impl<'a> Fsm<'a> {
 
             // Head determines the number of permutations because we always
             // have more head permutations than body
-            permutations: self.member_h_max,
+            permutations: self.max_permutes.0,
             head: self.entry_head_index,
             body: self.entry_body_index,
             tail: self.fragment_len,
         });
 
         self.entry_head_index = self.fragment_len;
-        self.member_h_max = 1;
-        self.member_b_max = 1;
-        self.h_group_size = (0, 0);
-        self.b_group_size = (0, 0);
+        self.max_permutes.0 = 1;
+        self.max_permutes.1 = 1;
+        self.chord_count = (0, 0);
+        self.body_count = (0, 0);
     }
 }
 
