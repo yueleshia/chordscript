@@ -5,6 +5,7 @@
 
 mod constants;
 mod errors;
+mod keyspace;
 mod lexer;
 mod macros;
 mod parser;
@@ -37,6 +38,7 @@ fn interpret() {
     let mut _hotkeys = parsemes.make_owned_view();
     _hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
     //_hotkeys.iter().for_each(|hk| println!("{}", hk));
+    keyspace::process(&parsemes).unwrap();
 
 }
 
