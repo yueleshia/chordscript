@@ -47,8 +47,20 @@ pub trait Print {
 
     // @TODO impl a direct print to stdout buffer and benchmark
 
-    //#[cfg(debug_assertions)]
+    #[cfg(debug_assertions)]
     fn to_string_custom(&self) -> String;
+
+    fn print_stdout(&self) {
+        let mut buffer = String::with_capacity(self.string_len());
+        self.push_string_into(&mut buffer);
+        print!("{}", buffer);
+    }
+
+    fn print_stderr(&self) {
+        let mut buffer = String::with_capacity(self.string_len());
+        self.push_string_into(&mut buffer);
+        eprint!("{}", buffer);
+    }
 }
 
 

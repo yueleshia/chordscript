@@ -56,7 +56,7 @@ fn main() {
         Err(Errors::Help) => println!("{}\n{}", LONG_HELP, options.usage(&raw_args[0])),
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
-        Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
+        Err(Errors::Parse(err)) => err.print_stderr(),
         //Err(Errors::Debug(err)) => eprintln!("{}", err),
     }
     std::process::exit(1);
@@ -154,18 +154,15 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         },
         "shortcuts" | "shortcut" | "s" => {
             process!(let shortcuts = @parse matches);
-            println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
+            deserialise::ListReal(&shortcuts).print_stdout();
         },
         "keyspaces" | "keyspace" | "k" => {
             process!(let keyspaces = @keyspace matches);
-            println!(
-                "{}",
-                deserialise::KeyspacePreview(&keyspaces).to_string_custom()
-            );
+            deserialise::KeyspacePreview(&keyspaces).print_stdout();
         },
         "sh" => {
             process!(let shortcuts = @parse matches);
-            println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
+            deserialise::Shellscript(&shortcuts).print_stdout();
         },
 
         @special-case
@@ -175,7 +172,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             process!(let lexemes = @lex matches);
             //lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
             let shortcuts = parser::parse_unsorted(lexemes).map_err(Errors::Parse)?;
-            println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
+            deserialise::ListAll(&shortcuts).print_stdout();
         }
 
     });
@@ -194,10 +191,19 @@ fn on_file() {
     let _lexemes = lexer::lex(&file).or_die(1);
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
     //println!("\n~~~~~~\n");
-    let _parsemes = parser::parse(_lexemes).or_die(1);
-    println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
-    let _keyspaces = keyspace::process(&_parsemes);
-    println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
+    let _parseme_owner = parser::parse_unsorted(_lexemes).or_die(1);
+    //println!("{}", deserialise::ListAll(&_parseme_owner).to_string_custom());
+    let _shortcuts = _parseme_owner.to_iter().collect::<Vec<_>>();
+
+    // I should not use len() check with externally defined file, but it is
+    // the quickest check to see if we altered the algorithm significantly
+    println!("~~~~\n{}", _shortcuts.len());
+    debug_assert_eq!(_shortcuts.len(), 101);
+    deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
+    deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
+    println!("~~~~");
+    //let _keyspaces = keyspace::process(&_parseme_owner);
+    //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
 }
 //#[test]
 fn _interpret() {
