@@ -27,25 +27,6 @@ pub const SEPARATOR: [char; SEPARATOR_LEN] = {
 // a macro is #![feature(const_str_from_utf8_unchecked)]
 // See: https://github.com/rust-lang/rust/issues/75196
 macro_rules! build_available_keys {
-    ($( pub const $var:ident : $type:ty, $enum:ident = [$( $val:literal, )*]; )*) => {
-    //($( pub const $var:ident : $type:ty, $enum:ident = { $($variant:ident => $val:literal, )*
-    //}; )*) => {
-        $(
-            pub const $var: $type = [$( $val, )*];
-            //enum $enum {
-            //}
-        )*
-        pub const AVAILABLE_KEYS: &str =
-            build_available_keys!(@join $( $( $val, )* )*);
-
-    };
-
-    (@join $first:literal, $( $val:literal, )*) => {
-        concat!($first, $(" ", $val, )*)
-    };
-}
-
-macro_rules! build_available_keys2 {
     ($( pub const $var:ident : $type:ty, $Enum:ident = {
         $($Variant:ident => $val:literal, )*
     }; )*) => {
@@ -61,8 +42,6 @@ macro_rules! build_available_keys2 {
         )*
         pub const AVAILABLE_KEYS: &str =
             build_available_keys!(@join $( $( $val, )* )*);
-
-
     };
     (@join $first:literal, $( $val:literal, )*) => {
         concat!($first, $(" ", $val, )*)
@@ -70,11 +49,12 @@ macro_rules! build_available_keys2 {
 }
 
 
-build_available_keys2! {
+// Following the naming conventions of xev for the keys
+build_available_keys! {
     pub const MODIFIERS: [&str; 4], Modifiers = {
         Alt => "alt", Ctrl => "ctrl", Shift => "shift", Super => "super",
     };
-    pub const KEYCODES: [&str; 40], Keycodes = {
+    pub const KEYCODES: [&str; 48], Keycodes = {
         Comma => ",",
         Period => ".",
         Zero => "0", One => "1", Two => "2", Thre => "3", Four => "4",
@@ -83,22 +63,16 @@ build_available_keys2! {
         H => "h", I => "i", J => "j", K => "k", L => "l", M => "m", N => "n",
         O => "o", P => "p", Q => "q", R => "r", S => "s", T => "t", U => "u",
         V => "v", W => "w", X => "x", Y => "y", Z => "z",
-        Space => "Space",
+        Up => "Up", Down => "Down", Left => "Left",
+        Print => "Print",
+        Right => "Right",
+        Space => "space",
+        Insert => "Insert",
         Return => "Return",
+        BackSpace => "BackSpace",
+        Semicolon => "semicolon",
     };
 }
-
-//build_available_keys! {
-//    pub const MODIFIERS2: [&str; 4], Modifiers = ["alt", "ctrl", "shift", "super",];
-//    pub const KEYCODES2: [&str; 39], Keycodes = [
-//        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-//        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-//        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-//        "Comma",
-//        "Space",
-//        "Return",
-//    ];
-//}
 
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;
@@ -122,6 +96,7 @@ pub const KEYSTR_UTF8_MAX_LEN: usize = {
 #[cfg(test)]
 mod test {
     use super::*;
+    const BLACKLIST: [char; 6] = ['|', '!', '"', ';', '{', '}'];
 
     fn assert_is_unique<T: Ord>(mut input: Vec<T>, msg: &str) {
         let before_sort_len = input.len();
@@ -138,6 +113,10 @@ mod test {
         assert_is_unique(WHITESPACE.to_vec(), stringify!(WHITESPACE));
         assert_is_unique(SEPARATOR.to_vec(), stringify!(SEPARATOR));
         assert_is_unique(KEYCODES.to_vec(), stringify!(KEYCODES));
+        assert_is_unique(MODIFIERS.to_vec(), stringify!(KEYCODES));
+
+        assert!(!KEYCODES.iter().any(|s| s.contains(&BLACKLIST[..])));
+        assert!(!MODIFIERS.iter().any(|s| s.contains(&BLACKLIST[..])));
     }
 
     #[test]
@@ -151,7 +130,7 @@ mod test {
                 a.len().cmp(&b.len())
             }
         });
-        assert_eq!(KEYCODES, sorted);
+        assert_eq!(sorted, KEYCODES);
     }
 
     #[test]
@@ -169,12 +148,4 @@ mod test {
         // Make sure we built 'AVAILABLE_KEYS' correctly
         assert_eq!(combined.clone().join(" "), AVAILABLE_KEYS);
     }
-
-    #[test]
-    fn no_invalid_punctuation() {
-        let invalid_chars = ['"', ';', ' '];
-        debug_assert!(KEYCODES.iter().find(|s| s.contains(&invalid_chars[..])).is_none());
-        debug_assert!(MODIFIERS.iter().find(|s| s.contains(&invalid_chars[..])).is_none());
-    }
-
 }

@@ -20,7 +20,7 @@ macro_rules! reexport {
 }
 
 reexport!(keyspace_preview::KeyspacePreview); // Default printer
-reexport!(list_preview::{ListPreview, ListChord}); // Default printer
+reexport!(list_preview::{ListDebug, ListPreview, ListChord}); // Default printer
 reexport!(shellscript::Shellscript); // For external file to be used by others
 
 reexport!(i3::I3); // No way to escape newlines, so should avoid this

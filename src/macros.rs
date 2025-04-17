@@ -77,6 +77,7 @@ macro_rules! const_concat {
     };
 }
 
+// @TODO include side-by-side tests?
 #[macro_export]
 macro_rules! define_syntax {
     ($func:ident
@@ -84,14 +85,15 @@ macro_rules! define_syntax {
             ! $($arg:ident : $ArgType:ty),*
             , ($( $to_match:ident : $ToMatchType:ty ),+)
         | -> $Out:ty,
-        $($state_variant:ident {
+        $($( $state_variant:ident )|+ {
             $(
                 $( $pattern:pat )|+ $( if $guard:expr )? => $runner:expr;
             )*
         })*
     ) => {
+        #[derive(Clone, Debug)]
         enum $StateEnum {
-            $($state_variant,)*
+            $( $( $state_variant, )* )*
         }
 
         fn $func<'a>(
@@ -101,7 +103,7 @@ macro_rules! define_syntax {
         ) -> Result<$Out, MarkupError> {
             let tuple = $crate::define_syntax!(@as_tuple $( $to_match ),*);
             match $state_tracker {
-                $($StateEnum::$state_variant => match tuple {
+                $( $( $StateEnum::$state_variant )|+ => match tuple {
                     $( $( $pattern )|+ $( if $guard )? => {
                         $runner
                     })*

@@ -1,28 +1,55 @@
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::deserialise::{TrimEscapeStrList, Print};
-use crate::parser::ShortcutOwner;
+use crate::parser::{ShortcutOwner, ShortcutIter};
 use crate::structs::{Chord, Shortcut, WithSpan};
 use crate::{array, precalculate_capacity_and_build};
 
+pub struct ListDebug<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
 pub struct ListPreview<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
 pub struct ListChord<'parsemes, 'filestr>(pub &'parsemes WithSpan<'filestr, Chord>);
+struct ListIter<'parsemes, 'filestr>(ShortcutIter<'parsemes, 'filestr>);
+
+const QUOTE: char = '\'';
+const CANDIDATES: [char; 1] = ['\''];
+const ESCAPE: [&str; 1] = ["'\\''"];
+
+impl<'parsemes, 'filestr> Print for ListDebug<'parsemes, 'filestr> {
+    precalculate_capacity_and_build!(self, buffer {} {
+        13 => buffer.push_str("Placeholders\n");
+        11 => buffer.push_str("==========\n");
+        ListIter(self.0.to_placeholder_iter()).string_len() =>
+            ListIter(self.0.to_placeholder_iter()).push_string_into(buffer);
+
+        1 => buffer.push('\n');
+
+        15 => buffer.push_str("Real Shortcuts\n");
+        11 => buffer.push_str("==========\n");
+        ListIter(self.0.to_iter()).string_len() =>
+            ListIter(self.0.to_iter()).push_string_into(buffer);
+    });
+}
 
 impl<'parsemes, 'filestr> Print for ListPreview<'parsemes, 'filestr> {
-    precalculate_capacity_and_build!(self, buffer {
-        let iter = self.0.to_iter();
-        let quote = '\'';
-        let candidates = &['\''];
-        let escape = &["'\\''"];
-    } {
-        iter.map(|Shortcut { hotkey, command }|
-            1 + array!(@len_join { hotkey } |> ListChord, " ; ") + 1
-            + TrimEscapeStrList(quote, candidates, escape, command).string_len()
+    precalculate_capacity_and_build!(self, buffer {} {
+        ListIter(self.0.to_iter()).string_len() =>
+            ListIter(self.0.to_iter()).push_string_into(buffer);
+    });
+}
+
+
+impl<'parsemes, 'filestr> Print for ListIter<'parsemes, 'filestr> {
+    precalculate_capacity_and_build!(self, buffer {} {
+        self.0.clone().map(|Shortcut { hotkey, command }|
+            1
+            + array!(@len_join { hotkey } |> ListChord, " ; ")
             + 1
-        ).sum::<usize>() => iter.for_each(|Shortcut { hotkey, command }| {
+            + TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).string_len()
+            + 1
+        ).sum::<usize>() => self.0.clone().for_each(|Shortcut { hotkey, command }| {
             buffer.push('|');
             array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
             buffer.push('|');
-            TrimEscapeStrList(quote, candidates, escape, command).push_string_into(buffer);
+            TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).push_string_into(buffer);
             buffer.push('\n');
         });
     });

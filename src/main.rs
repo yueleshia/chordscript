@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
+#![allow(clippy::mem_discriminant_non_enum)]
 
 mod constants;
 mod deserialise;
@@ -67,7 +68,7 @@ enum Errors {
     Io(io::Error),
     Parse(reporter::MarkupError),
 }
-//run: cargo run -- keyspaces --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
+//run: cargo run -- list-debug --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
 fn parse_args(args: &[String]) -> Result<(), Errors> {
     let program = &args[0];
     let args = &args[1..];
@@ -107,6 +108,7 @@ fn parse_args(args: &[String]) -> Result<(), Errors> {
             "{}",
             deserialise::KeyspacePreview(&keyspace::process(&parsemes)).to_string_custom()
         ),
+        Some("list-debug") => println!("{}", deserialise::ListDebug(&parsemes).to_string_custom()),
 
         Some("sh") => println!("{}", deserialise::Shellscript(&parsemes).to_string_custom()),
         x => panic!("Invalid command {:?}", x),

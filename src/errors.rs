@@ -20,8 +20,12 @@ pub const PANIC_NON_KEY: &str = "There should only be HeadTypes for chords insid
 pub const PANIC_CHOICE_NON_SECTION: &str = "There should only be BodyType::Section inside a body choice group";
 pub const EMPTY_HOTKEY: &str = "You cannot have an empty hotkey. You can comment this out by prefixing with '#' (This makes it part of the previous command and '#' marks comments in shellscript)";
 pub const TOO_MUCH_BODY: &str = "No hotkey is mapped to this permutation. There are too many choices for this command.";
-pub const HOTKEY_DUPLICATE: &str = "This hotkey is already defined previously.";
-pub const HOTKEY_UNREACHABLE: &str = "The overall hotkey is not accessible because the part of the hotkey is already defined and will be recognised first.";
+pub const HOTKEY_DUPLICATE: &str = "This hotkey is defined previously.";
+pub const HOTKEY_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is already defined and will be recognised first.";
+pub const PLACEHOLDER_DUPLICATE: &str = "This hotkey is reserved for outer config into which we are embedding these shortcuts.";
+pub const PLACEHOLDER_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is reserved and will be recognised first.";
+//pub const PLACEHOLDER_DUPLICATE: &str = "This hotkey is reserved for outer config into which we are embedding these shortcuts.";
+//pub const PLACEHOLDER_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is reserved and will be recognised first.";
 
 #[test]
 fn const_concat_real_example() {
