@@ -31,16 +31,21 @@ fn interpret() {
     //println!("{}", _file);
 
     let _error = reporter::MarkupError::new(_file, &_file[20..35], "what a failure".to_string());
-    let _lexemes = lexer::process(_file).unwrap();
-    //_lexemes.to_iter().for_each(print_lexeme);
-    //_lexemes.to_iter().for_each(debug_print_lexeme);
+    if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
+        let _lexemes = lexer::process(_file)?;
+        //_lexemes.to_iter().for_each(print_lexeme);
+        //_lexemes.to_iter().for_each(debug_print_lexeme);
 
-    let parsemes = parser::process(&_lexemes).unwrap();
-    let mut _hotkeys = parsemes.make_owned_view();
-    //_hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
-    //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
-    let _keyspaces = keyspace::process(&parsemes).unwrap();
-    keyspace::debug_print_keyspace_owner(&_keyspaces);
+        let parsemes = parser::process(&_lexemes)?;
+        let mut _hotkeys = parsemes.make_owned_view();
+        //_hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+        //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
+        let _keyspaces = keyspace::process(&parsemes)?;
+        Ok(())
+    })() {
+        println!("{}", err);
+    }
+    //keyspace::debug_print_keyspace_owner(&_keyspaces);
 }
 
 fn debug_print_lexeme(lexeme: lexer::Lexeme) {

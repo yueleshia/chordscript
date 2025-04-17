@@ -79,7 +79,8 @@ impl MarkupError {
     pub fn new<'a>(source: &'a str, span: &'a str, message: String) -> Self {
         let index = index_of_substr(source, span);
         if span.is_empty() {
-            panic!("Errors on the");
+            println!("{}\n===\n{}", span, message);
+            panic!("Cannot report empty errors");
         }
         Self {
             source: source.to_string(),

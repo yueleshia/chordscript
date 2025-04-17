@@ -64,7 +64,7 @@ impl<'filestr> LexemeOwner<'filestr> {
         } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
             self.head.push(data.head(HeadLexeme::Key(i), keyrange));
         } else {
-            data.report(keystr, errors::HEAD_INVALID_KEY)?;
+            Err(data.report(keyrange, errors::HEAD_INVALID_KEY))?;
         }
         Ok(())
     }
@@ -92,7 +92,7 @@ impl<'filestr> LexemeOwner<'filestr> {
 // @TODO: Add test for Byte-Order Mark (BOM) ?
 pub fn process(filestr: &str) -> Result<LexemeOwner, MarkupError> {
     // Skip until first '|' at beginning of line
-    let filestr = {
+    let markup = {
         let mut walker = filestr.chars();
         let mut prev_ch = '\n';
         loop {
@@ -107,19 +107,12 @@ pub fn process(filestr: &str) -> Result<LexemeOwner, MarkupError> {
 
     // Calculate the memory needed for the Arrays
     let capacity = {
-        let data = &mut Metadata::new(filestr);
+        let data = &mut Metadata::new(filestr, markup);
         let state = &mut State::Head;
         while let Some(item) = data.next() {
             lex_syntax(state, data, None, item)?;
         }
 
-        match state {
-            State::Head => panic!("Head not closed"),
-            State::HeadBrackets => panic!("Head bracket not closed"),
-            State::Body => {} // Add one body and one entry
-            State::BodyLiteral => panic!("Body literal not closed"),
-            State::BodyBrackets => panic!("Body brackets not closed"),
-        }
         // State::Body end not processed in loop
         (
             data.entry_capacity + 1,
@@ -134,20 +127,39 @@ pub fn process(filestr: &str) -> Result<LexemeOwner, MarkupError> {
         let mut owner = LexemeOwner::new(capacity);
         let (head_cursor, body_cursor) = (&mut Cursor(0), &mut Cursor(0));
         let state = &mut State::Head;
-        let data = &mut Metadata::new(filestr);
+        let data = &mut Metadata::new(filestr, markup);
         while let Some(item) = data.next() {
-            //println!("{} {:?} {:?}",
-            //    data.rindex,
-            //    item.0,
-            //    item.2.chars().take(20).collect::<String>()
-            //);
-            lex_syntax(state, data, Some((&mut owner, head_cursor, body_cursor)), item)?;
+            lex_syntax(
+                state,
+                data,
+                Some((&mut owner, head_cursor, body_cursor)),
+                item,
+            )?;
         }
 
-        let last_body = data.cursor.move_to(data.source.len());
-        owner.body.push(data.body(BodyLexeme::Section, last_body));
-        owner.push_entry(head_cursor, body_cursor);
-        owner
+        let len = data.source.len();
+        let to_push_first_element = &owner.head[head_cursor.0];
+        let start_index = to_push_first_element.2.start;
+        let rest = start_index..len;
+
+        match state {
+            State::Head => Err(data.report(rest, errors::UNFINISHED_HEAD)),
+            State::HeadBrackets => Err(data.report(rest, errors::UNFINISHED_BRACKETS)),
+            State::Body => {
+                let last_body = data.cursor.move_to(data.source.len());
+                owner.body.push(data.body(BodyLexeme::Section, last_body));
+                owner.push_entry(head_cursor, body_cursor);
+                Ok(owner)
+            }
+            State::BodyLiteral => Err(data.report(
+                rest,
+                errors::UNFINISHED_LITERAL
+            )),
+            State::BodyBrackets => Err(data.report(
+                rest,
+                errors::UNFINISHED_BRACKETS
+            )),
+        }?
     };
 
     debug_assert_eq!(
@@ -177,15 +189,15 @@ define_syntax! {
     | -> (),
 
     Head {
-        (',', i, _) => data.report(
-            &data.source[i..i + ','.len_utf8()],
+        (',', i, _) => return Err(data.report(
+            i..i + ','.len_utf8(),
             errors::HEAD_COMMA_OUTSIDE_BRACKETS
-        )?;
+        ));
 
-        ('\\', i, _) => data.report(
-            &data.source[i..i + '\\'.len_utf8()],
+        ('\\', i, _) => return Err(data.report(
+            i..i + '\\'.len_utf8(),
             errors::HEAD_NO_ESCAPING,
-        )?;
+        ));
 
         ('|', i, _) => {
             *state = State::Body;
@@ -216,10 +228,10 @@ define_syntax! {
                 data.head_capacity += 2;
                 //Ok((0, 2, 0))
             } else {
-                data.report(
-                    &data.source[i + '{'.len_utf8()..i + "{{".len()],
+                Err(data.report(
+                    i + '{'.len_utf8()..i + "{{".len(),
                     errors::MISSING_LBRACKET,
-                )?;
+                ))?;
             }
         };
 
@@ -244,21 +256,22 @@ define_syntax! {
 
 
         (_, i, _) if data.cursor.width(i) > KEYSTR_UTF8_MAX_LEN => {
-            panic!("Panic at the disco")
+            let till_now = data.cursor.move_to(i);
+            return Err(data.report(till_now, errors::HEAD_INVALID_KEY));
         };
         _ => {};
     }
 
     HeadBrackets {
-        ('|', i, _) => data.report(
-            &data.source[i..i + '|'.len_utf8()],
+        ('|', i, _) => return Err(data.report(
+            i..i + '|'.len_utf8(),
             errors::HEAD_INVALID_CLOSE,
-        )?;
+        ));
 
-        ('\\', i, _) => data.report(
-            &data.source[i..i + '\\'.len_utf8()],
+        ('\\', i, _) => return Err(data.report(
+            i..i + '\\'.len_utf8(),
             errors::HEAD_NO_ESCAPING,
-        )?;
+        ));
 
         ('}', i, _) => {
             if let Some(('}', _, _)) = data.next() { // second '}'
@@ -275,10 +288,10 @@ define_syntax! {
                 data.head_capacity += 2;
                 //Ok((0, 2, 0))
             } else {
-                data.report(
-                    &data.source[i + '}'.len_utf8()..i + "}}".len()],
+                Err(data.report(
+                    i + '}'.len_utf8()..i + "}}".len(),
                     errors::MISSING_RBRACKET,
-                )?;
+                ))?;
             }
         };
 
@@ -303,7 +316,8 @@ define_syntax! {
         };
 
         (_, i, _) if data.cursor.width(i) > KEYSTR_UTF8_MAX_LEN => {
-            panic!("Panic at the disco");
+            let till_now = data.cursor.move_to(i);
+            return Err(data.report(till_now, errors::HEAD_INVALID_KEY));
         };
 
         _ => {};
@@ -487,6 +501,7 @@ define_syntax! {
 // Info specific to the 'to_push' = true branch of the lexer
 //
 struct Metadata<'filestr> {
+    original: &'filestr str, // For error propagation
     source: &'filestr str,
     walker: std::str::Chars<'filestr>,
     peek: Option<char>,
@@ -499,10 +514,11 @@ struct Metadata<'filestr> {
     body_capacity: usize,
 }
 impl<'filestr> Metadata<'filestr> {
-    fn new(source: &'filestr str) -> Self {
+    fn new(original: &'filestr str, source: &'filestr str) -> Self {
         let mut walker = source.chars();
         let peek = walker.next();
         Self {
+            original,
             source,
             walker,
             rest: source,
@@ -525,17 +541,19 @@ impl<'filestr> Metadata<'filestr> {
         }
     }
 
-
     fn head(&self, l: HeadLexeme, range: Range<usize>) -> WithSpan<'filestr, HeadLexeme> {
-        WithSpan(l, self.source, range)
+        let offset = self.original.len() - self.source.len();
+        WithSpan(l, self.original, offset + range.start..offset + range.end)
     }
 
     fn body(&self, l: BodyLexeme, range: Range<usize>) -> WithSpan<'filestr, BodyLexeme> {
-        WithSpan(l, self.source, range)
+        let offset = self.original.len() - self.source.len();
+        WithSpan(l, self.original, offset + range.start..offset + range.end)
     }
 
-    fn report(&self, span: &'filestr str, message: &str) -> Result<(), MarkupError> {
-        Err(MarkupError::new(&self.source, span, message.to_string()))
+    fn report(&self, span: Range<usize>, message: &str) -> MarkupError {
+        // 'self.source' is a substr of 'self.original'
+        MarkupError::new(&self.original, &self.source[span], message.to_string())
     }
 }
 

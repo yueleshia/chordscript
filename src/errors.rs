@@ -3,10 +3,13 @@ use crate::constants::AVAILABLE_KEYS;
 
 //run: cargo test -- --nocapture
 
-pub const HEAD_INVALID_CLOSE: &str = "Unexpected bar '|'. Close the enumeration first with '}}'";
+pub const HEAD_INVALID_CLOSE: &str = "Unexpected bar '|'. Close the enumeration first with '}}'.";
 pub const HEAD_NO_ESCAPING: &str =
-    "You cannot escape characters with backslash '\\' in the hotkey definition portion";
-pub const HEAD_COMMA_OUTSIDE_BRACKETS: &str = "Unexpected comma ','. Type 'comma' for the key, ';' for a chord separator. ',' only has meaning inside an enumeration group '{{..}}'";
+    "You cannot escape characters with backslash '\\' in the hotkey definition portion.";
+pub const HEAD_COMMA_OUTSIDE_BRACKETS: &str = "Unexpected comma ','. Type 'comma' for the key, ';' for a chord separator. ',' only has meaning inside an enumeration group '{{..}}'.";
+pub const UNFINISHED_HEAD: &str = "Missing a closing '|' to finish the hotkey definition.";
+pub const UNFINISHED_LITERAL: &str = "Missing '}}}' to close the literal text input.";
+pub const UNFINISHED_BRACKETS: &str = "Missing '}}' to close the permutations bracket.";
 pub const MISSING_LBRACKET: &str =
     "Missing a second opening curly brace. Need '{{' to start an enumeration";
 pub const MISSING_RBRACKET: &str =
