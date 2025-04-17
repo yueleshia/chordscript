@@ -399,6 +399,9 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
                 fsm.emit_b_member(&fsm.original[before_bracket])
             }
         }
+        ('{', Some('{')) => fsm
+            .walker
+            .error_at_current(errors::DOUBLE_LBRACKET_IN_BODY_PERMUTATION_GROUP),
         _ => Ok(None),
     }
 }
@@ -582,7 +585,11 @@ impl<'a> Fsm<'a> {
             let bar_to_bar = &self.original[first_bar..including_bar];
 
             // TODO: change this into a two pointers?
-            Err(MarkupError::from_str(self.original, bar_to_bar, errors::EMPTY_HOTKEY.to_string()))
+            Err(MarkupError::from_str(
+                self.original,
+                bar_to_bar,
+                errors::EMPTY_HOTKEY.to_string(),
+            ))
         } else {
             Ok(())
         }

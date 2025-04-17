@@ -35,6 +35,7 @@ pub mod lexer {
         Either delete the highlighted body portion or add more options for the head.\n\
         If you want a comma as a text, you escape like '\\,'.";
 
+    pub const DOUBLE_LBRACKET_IN_BODY_PERMUTATION_GROUP: &str = "You cannot have '{{' inside a permutation group. Either you forgot to close the previous permutation group or you need to escape it like '\\{\\{'.";
 
     pub const END_BEFORE_HEAD_CLOSE: &str = "You did not close the head. Please add a '|'. Alternatively, if you placed '|' intentionally at the start of a line, you may wish to consider the following:\n\
         - '{|\\||}' (literals)\n\
