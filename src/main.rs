@@ -1,3 +1,4 @@
+// run: cargo test
 //run: cargo test -- --nocapture
 // run: cargo run -- --help
 // run: cargo run --release
@@ -27,7 +28,6 @@ const LONG_HELP: &str = "\
 THIS IS WIP
 ";
 
-
 fn main() {
     let raw_args = std::env::args().collect::<Vec<_>>();
 
@@ -47,12 +47,8 @@ fn main() {
         .and_then(subcommands)
     {
         Ok(()) => std::process::exit(0),
-        Err(Errors::ShortHelp) => {
-            println!("{}", options.short_usage(&raw_args[0]))
-        }
-        Err(Errors::Help) => {
-            println!("{}\n{}", LONG_HELP, options.usage(&raw_args[0]))
-        }
+        Err(Errors::ShortHelp) => println!("{}", options.short_usage(&raw_args[0])),
+        Err(Errors::Help) => println!("{}\n{}", LONG_HELP, options.usage(&raw_args[0])),
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
@@ -128,7 +124,10 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         }
         Some("keyspaces") | Some("keyspace") | Some("k") => {
             process!(let keyspaces = @keyspace matches);
-            println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+            println!(
+                "{}",
+                deserialise::KeyspacePreview(&keyspaces).to_string_custom()
+            );
         }
         Some("sh") => {
             //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
@@ -142,7 +141,6 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         }
 
         Some(_) => return Err(Errors::ShortHelp),
-
     }
     Ok(())
 }
@@ -154,10 +152,10 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
 fn on_file() {
     let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
     let file = fs::read_to_string(path).unwrap();
-    let lexemes = lexer::lex(&file).unwrap();
-    lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
-    let parsemes = parser::parse(lexemes).unwrap();
-    println!("{}", deserialise::ListAll(&parsemes).to_string_custom());
+    let _lexemes = lexer::lex(&file).unwrap();
+    //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
+    let _parsemes = parser::parse(_lexemes).unwrap();
+    //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
 }
 #[test]
 fn interpret() {
@@ -190,8 +188,7 @@ fn interpret() {
 
     if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
         let _lexemes = lexer::lex(_file)?;
-        //_lexemes.to_iter().for_each(print_lexeme);
-        //_lexemes.to_iter().for_each(debug_print_lexeme);
+        //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
 
         let _parsemes = parser::parse(_lexemes)?;
         //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());

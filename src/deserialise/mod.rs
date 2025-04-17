@@ -27,6 +27,7 @@ reexport!(list_preview::*); // Default printer
 // @TODO external shellscript that handles adapting for us
 
 use std::cmp;
+use crate::precalculate_capacity_and_build;
 use crate::structs::{Chord, Cursor, WithSpan};
 
 //run: cargo run -- shortcuts -c $HOME/interim/hk/config.txt
@@ -106,43 +107,6 @@ macro_rules! array {
             .for_each(|item| $wrapper(item).push_string_into(&mut string));
         string
     }};
-}
-
-// This macro is for ergonomics, capacity and str can be specified on one line
-// This then calculates total capacity, allocates, then pushes
-#[macro_export]
-macro_rules! precalculate_capacity_and_build {
-    ($this:ident, $buffer:ident {
-        $( $init:stmt; )*
-    } {
-        $( $size:expr => $push:expr; )*
-    }) => {
-        fn string_len(&$this) -> usize {
-            $( $init )*
-            let capacity = 0 $( + $size )*;
-            capacity
-        }
-
-        fn push_string_into(&$this, $buffer: &mut String) {
-            #[cfg(debug_assertions)]
-            debug_assert!({ $this.to_string_custom(); true });
-            $( $init )*
-            $( $push; )*
-        }
-
-        #[cfg(debug_assertions)]
-        fn to_string_custom(&$this) -> String {
-            $( $init )*
-            let capacity = $this.string_len();
-            let mut owner = String::with_capacity(capacity);
-            let $buffer = &mut owner;
-            $( $push; )*
-            debug_assert_eq!(capacity, $buffer.len(),
-                "Pre-calculated capacity is incorrect.");
-            owner
-        }
-
-    };
 }
 
 // This essentially copies constants::KEYCODES or constants::MODIFIERS, and

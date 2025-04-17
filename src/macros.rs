@@ -1,10 +1,8 @@
-// run: cargo test -- --nocapture
-//run: cargo run
-// Here we use // std::mem::transmutate;
+//run: cargo test -- --nocapture
+// run: cargo run
+// Here we use std::mem::transmutate;
 
-
-
-
+// No dependencies here
 
 #[macro_export]
 macro_rules! map {
@@ -77,49 +75,42 @@ macro_rules! const_concat {
     };
 }
 
-// @TODO include side-by-side tests?
+// This macro is for ergonomics, capacity and str can be specified on one line
+// This then calculates total capacity, allocates, then pushes
 #[macro_export]
-macro_rules! define_syntax {
-    ($func:ident
-        | $state_tracker:ident: $StateEnum:ident
-            ! $($arg:ident : $ArgType:ty),*
-            , ($( $to_match:ident : $ToMatchType:ty ),+)
-        | -> $Out:ty,
-        $($( $state_variant:ident )|+ {
-            $(
-                $( $pattern:pat )|+ $( if $guard:expr )? => $runner:expr;
-            )*
-        })*
-    ) => {
-        #[derive(Clone, Debug)]
-        enum $StateEnum {
-            $( $( $state_variant, )* )*
+macro_rules! precalculate_capacity_and_build {
+    ($this:ident, $buffer:ident {
+        $( $init:stmt; )*
+    } {
+        $( $size:expr => $push:expr; )*
+    }) => {
+        fn string_len(&$this) -> usize {
+            $( $init )*
+            let capacity = 0 $( + $size )*;
+            capacity
         }
 
-        fn $func<'a>(
-            $state_tracker: &mut $StateEnum,
-            $( $arg : $ArgType, )*
-            $( $to_match : $ToMatchType, )*
-        ) -> Result<$Out, MarkupError> {
-            let tuple = $crate::define_syntax!(@as_tuple $( $to_match ),*);
-            match $state_tracker {
-                $( $( $StateEnum::$state_variant )|+ => match tuple {
-                    $( $( $pattern )|+ $( if $guard )? => {
-                        $runner
-                    })*
-                },)*
-            }
-            Ok(())
+        fn push_string_into(&$this, $buffer: &mut String) {
+            #[cfg(debug_assertions)]
+            debug_assert!({ $this.to_string_custom(); true });
+            $( $init )*
+            $( $push; )*
         }
-    };
 
-    (@as_tuple $arg:ident) => { $arg };
-    (@as_tuple $arg1:ident, $( $arg:ident ),+) => {
-        ( $arg1, $( $arg, )+ )
+        #[cfg(debug_assertions)]
+        fn to_string_custom(&$this) -> String {
+            $( $init )*
+            let capacity = $this.string_len();
+            let mut owner = String::with_capacity(capacity);
+            let $buffer = &mut owner;
+            $( $push; )*
+            debug_assert_eq!(capacity, $buffer.len(),
+                "Pre-calculated capacity is incorrect.");
+            owner
+        }
+
     };
 }
-
-
 
 #[test]
 fn const_concat() {
