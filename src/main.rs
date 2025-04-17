@@ -6,8 +6,6 @@ mod errors;
 mod lexer;
 mod reporter;
 
-const DEV_PRINT: bool = false;
-
 fn main() {
     println!("Hello, world!");
 }
@@ -27,7 +25,7 @@ fn interpret() {
 
     let _error = reporter::MarkupError::new(_file, &_file[20..35], "what a failure".to_string());
     let lexemes = lexer::process(_file).unwrap();
-    println!("{}", _error);
+    //println!("{}", _error);
 
     for (i, x) in lexemes.heads.iter().enumerate() {
         println!("{}: {:?}", i, x);
