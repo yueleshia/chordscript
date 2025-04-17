@@ -22,7 +22,6 @@ pub struct ShortcutOwner<'filestr> {
 
 type ShortcutView<'owner, 'filestr> = Vec<Shortcut<'owner, 'filestr>>;
 
-// @TODO Add verification for to catch e.g 'a;b' and 'a;b;c' hotkeys
 // Choose this API to meaningfully separate a sorted and original-order view
 // Also keeps the fields in 'ShortcutOwner' private
 impl<'filestr> ShortcutOwner<'filestr> {
@@ -38,10 +37,32 @@ impl<'filestr> ShortcutOwner<'filestr> {
 
     pub fn make_owned_sorted_view<'owner>(&'owner self) -> ShortcutView<'owner, 'filestr> {
         let mut view = self.make_owned_view();
-        view.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+        // Prefer stable sort to keep ordering for duplicate line errors
+        view.sort_by(|a, b| a.hotkey.cmp(b.hotkey));
         view
     }
 }
+
+/****************************************************************************
+ * Macros
+ ****************************************************************************/
+// Outputs a '(usize, <$source as Iterator>::Item)' with the usize is the index
+// of the found item
+macro_rules! find_prev_from {
+    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
+        $source.iter().enumerate().take($i).rfind(|(_, lexeme)|
+            matches!(lexeme.data, $search_for $( | $search_for2 )*)
+        ).unwrap()
+    };
+}
+macro_rules! find_next_from {
+    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
+        $source.iter().enumerate().skip($i).find(|(_, lexeme)|
+            matches!(lexeme.data, $search_for $( | $search_for2 )*)
+        ).unwrap()
+    };
+}
+
 
 /****************************************************************************
  * Syntax
@@ -112,40 +133,40 @@ pub fn process<'filestr>(
         owner
     };
 
-    //verify_no_overlap(&parsemes)?;
+    verify_no_overlap(&parsemes)?;
 
     Ok(parsemes)
 }
 
-// Verify that all hotkeys are accessible
+// Verify that all hotkeys are accessible (and no duplicates)
 // e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
-//fn verify_no_overlap(parsemes: &ShortcutOwner) -> Result<(), MarkupError> {
-//    let sorted_shortcuts = parsemes.make_owned_sorted_view();
-//    let mut iter = sorted_shortcuts.iter().map(|shortcut| shortcut.hotkey);
-//
-//    if let Some(first) = iter.next() {
-//        iter.try_fold(first, |prev_hotkey, curr_hotkey| {
-//            let prev_len = prev_hotkey.len();
-//            let curr_len = curr_hotkey.len();
-//            if curr_len >= prev_len && &curr_hotkey[0..prev_len] == prev_hotkey {
-//                //MarkupError::from_span_over(
-//                //    first,
-//                //    &curr_hotkey[prev_len - 1])
-//                //    "The hotkeys overlap with each other".to_string(),
-//                //)
-//                // @TODO
-//                panic!(
-//                    "These hotkeys overlap with each other\n{}\n{}",
-//                    crate::structs::debug_hotkey_to_string(prev_hotkey),
-//                    crate::structs::debug_hotkey_to_string(curr_hotkey),
-//                );
-//            }
-//
-//            Ok(curr_hotkey)
-//        })?;
-//    }
-//    Ok(())
-//}
+fn verify_no_overlap(parsemes: &ShortcutOwner) -> Result<(), MarkupError> {
+    let sorted_shortcuts = parsemes.make_owned_sorted_view();
+    let mut iter = sorted_shortcuts.iter().map(|shortcut| shortcut.hotkey);
+
+    if let Some(first) = iter.next() {
+        iter.try_fold(first, |prev_hotkey, curr_hotkey| {
+            let prev_len = prev_hotkey.len();
+            let curr_len = curr_hotkey.len();
+            if curr_len >= prev_len && &curr_hotkey[0..prev_len] == prev_hotkey {
+                // @TODO '|q; c|' and '|q|' does not have the correct span
+                let last = &curr_hotkey[prev_len - 1];
+                let message = if curr_len == prev_len {
+                    errors::HOTKEY_DUPLICATE.to_string()
+                } else {
+                    errors::HOTKEY_UNREACHABLE.to_string()
+                };
+                return Err(MarkupError::from_range(
+                    last.context,
+                    curr_hotkey[0].span_to_as_range(last),
+                    message));
+            }
+
+            Ok(curr_hotkey)
+        })?;
+    }
+    Ok(())
+}
 
 define_syntax! {
     parse_syntax | state: State
@@ -189,6 +210,8 @@ define_syntax! {
     End {
         l => {
             // @TODO Investigate why head is +1 but body is not
+            // Because head always adds HeadType::Blank, but body does not
+            // add a BodyType::Section with empty span?
             match l {
                 Either::H(_) => data.space.calc_space(1, data.partition_width + 1),
                 Either::B(_) => data.space.calc_space(1, data.partition_width),
@@ -295,23 +318,6 @@ fn parse_lexeme(
     Ok((head_data, body_data))
 }
 
-// Outputs a '(usize, <$source as Iterator>::Item)' with the usize is the index
-// of the found item
-macro_rules! find_prev_from {
-    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
-        $source.iter().enumerate().take($i).rfind(|(_, lexeme)|
-            matches!(lexeme.data, $search_for $( | $search_for2 )*)
-        ).unwrap()
-    };
-}
-macro_rules! find_next_from {
-    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
-        $source.iter().enumerate().skip($i).find(|(_, lexeme)|
-            matches!(lexeme.data, $search_for $( | $search_for2 )*)
-        ).unwrap()
-    };
-}
-
 impl<'filestr> ShortcutOwner<'filestr> {
     fn push_arrangement(
         &mut self,
@@ -324,7 +330,7 @@ impl<'filestr> ShortcutOwner<'filestr> {
         debug_assert_eq!(body_arrangement.0.len(), body_arrangement.1.len());
 
         let (head_begin, body_begin) = (self.chords.len(), self.scripts.len());
-        let mut cursor = Cursor(0);
+        let mut cursor = Cursor(head[0].range.start);
         let last_chord = head_arrangement
             .1
             .iter()
@@ -354,11 +360,11 @@ impl<'filestr> ShortcutOwner<'filestr> {
                 })
             })?;
 
-        // If no hotkeys were built
+        // If no hotkeys were built error else push
         if last_chord == Chord::new() {
             let last = &head.last().unwrap().range;
             let range = if head_begin == self.chords.len() {
-                const BAR: usize = "|".len(); // Includes bars around head
+                const BAR: usize = "|".len(); // Include bars around head
                 (head[0].range.start - BAR, last.end + BAR)
             } else {
                 let len = head.len();

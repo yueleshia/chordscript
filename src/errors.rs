@@ -22,6 +22,8 @@ pub const PANIC_PREV_SEPARATOR_MISSING: &str = "Neither BodyType::ChoiceBegin no
 pub const PANIC_NEXT_SEPARATOR_MISSING: &str = "Neither BodyType::ChoiceDelim nor BodyType::ChoiceClose found after this point";
 pub const EMPTY_HOTKEY: &str = "You cannot have an empty hotkey. You can comment this out by prefixing with '#' (This makes it part of the previous command and '#' marks comments in shellscript)";
 pub const TOO_MUCH_BODY: &str = "No hotkey is mapped to this permutation. There are too many choices for this command.";
+pub const HOTKEY_DUPLICATE: &str = "This hotkey is already defined previously.";
+pub const HOTKEY_UNREACHABLE: &str = "The overall hotkey is not accessible because the part of the hotkey is already defined and will be recognised first.";
 
 #[test]
 fn const_concat_real_example() {

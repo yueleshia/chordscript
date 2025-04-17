@@ -30,7 +30,7 @@ fn interpret() {
 #| | echo asdf  # @TODO this should not be a lexer error
 #|super;| echo yo
 #|| echo yo
-#|super shift q|echo 1,2,3
+#|super shift t|echo {{3349\, 109324}}
 |super shift q|"#;
     //println!("{}", _file);
 
@@ -42,7 +42,7 @@ fn interpret() {
         let parsemes = parser::process(&_lexemes)?;
         //let mut _hotkeys = parsemes.make_owned_sorted_view();
         //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
-        let _keyspaces = keyspace::process(&parsemes)?;
+        let _keyspaces = keyspace::process(&parsemes);
         keyspace::debug_print_keyspace_owner(&_keyspaces);
         Ok(())
     })() {

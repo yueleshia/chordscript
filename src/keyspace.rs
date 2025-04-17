@@ -6,7 +6,6 @@ use std::mem;
 use std::ops::Range;
 
 use crate::parser::ShortcutOwner;
-use crate::reporter::MarkupError;
 use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
 
 /****************************************************************************
@@ -37,7 +36,7 @@ pub struct KeyspaceOwner<'parsemes, 'filestr> {
  ****************************************************************************/
 pub fn process<'parsemes, 'filestr>(
     shortcut_owner: &'parsemes ShortcutOwner<'filestr>,
-) -> Result<KeyspaceOwner<'parsemes, 'filestr>, MarkupError> {
+) -> KeyspaceOwner<'parsemes, 'filestr> {
     let view = shortcut_owner.make_owned_sorted_view();
 
     //let hotkeys: &[Hotkey] = &view;
@@ -101,7 +100,7 @@ pub fn process<'parsemes, 'filestr>(
             all_actions,
         }
     };
-    Ok(owner)
+    owner
 }
 
 //#[test]

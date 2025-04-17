@@ -321,8 +321,10 @@ define_syntax! {
 
             let include_newline = data.cursor.move_to(i);
             data.next(); // Skip '|'
-            data.eat_charlist(&SEPARATOR); // Eat cause in State::Head
-            data.cursor.move_to(i + "\n|".len());
+            // Do not eat charlist so that HeadType::Blank has the correct span
+            // i.e. "|  |" should trigger parser errors::EMTPY_HOTKEY
+            //      and the span should be correct
+            data.cursor.move_to(data.rindex);
 
             if let Some((tokens, head_cursor, body_cursor)) = is_push {
                 tokens.body.push(data.token(BodyType::Section, include_newline));
