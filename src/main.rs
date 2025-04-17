@@ -128,6 +128,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
 
         Some("debug-shortcuts") | None => {
             process!(let lexemes = @lex matches);
+            //lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
             let shortcuts = parser::parse_unsorted(lexemes).map_err(Errors::Parse)?;
             println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
         }

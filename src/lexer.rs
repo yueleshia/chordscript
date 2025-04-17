@@ -10,7 +10,7 @@ type Range = std::ops::Range<usize>;
 pub type StepError = String;
 type PassOutput<'filestr> = Result<Option<Lexeme<'filestr>>, StepError>;
 
-//run: cargo build; time cargo run -- shortcuts-debug -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list ./keyspace-list.sh api
+//run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list ./keyspace-list.sh api
 // run: cargo test
 
 #[derive(Debug)]
@@ -18,8 +18,8 @@ pub enum Lexeme<'filestr> {
     Key(&'filestr str),
     HChoice(usize, &'filestr str),
 
-    ChordEndK(&'filestr str),
-    ChordEndHC(usize, &'filestr str),
+    ChordDelimH(&'filestr str),
+    ChordDelimHC(usize, &'filestr str),
 
     Literal(&'filestr str),
     BChoice(usize, &'filestr str),
@@ -221,21 +221,19 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
         }
 
         (';', _) => {
-            let before_semicolon = fsm.cursor.move_to(fsm.walker.prev);
+            // i.e. cursor is pointing at semicolon
+            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            let semicolon = fsm.cursor.move_to(fsm.walker.post);
             fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
-            fsm.emit_h_chord(&fsm.original[before_semicolon])
+            fsm.emit_h_chord(&fsm.original[semicolon])
         }
 
         _ if SEPARATOR.contains(&ch) => {
             let before_blank = fsm.cursor.move_to(fsm.walker.prev);
             fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
-            if let Some(';') = fsm.walker.peek() {
-                fsm.emit_h_chord(&fsm.original[before_blank])
-            } else {
-                fsm.emit_head(&fsm.original[before_blank])
-            }
+            fsm.emit_head(&fsm.original[before_blank])
         }
 
         /*************************************
@@ -245,9 +243,10 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             fsm.change_state(State::Body);
 
             // Change to State::Body
-            let before_bar = fsm.cursor.move_to(fsm.walker.prev);
-            let lexeme = fsm.emit_h_chord(&fsm.original[before_bar]);
-            fsm.cursor.move_to(fsm.walker.post);
+            // i.e. cursor is pointing at the bar
+            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            let bar = fsm.cursor.move_to(fsm.walker.post);
+            let lexeme = fsm.emit_h_chord(&fsm.original[bar]);
             fsm.mark_body_start(); // @VOLATILE: After `emit_h_chord()`
             lexeme
         }
@@ -260,9 +259,10 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             fsm.change_state(State::Body);
 
             // Change to State::Body
-            let before_exclaim = fsm.cursor.move_to(fsm.walker.prev);
-            let lexeme = fsm.emit_h_chord(&fsm.original[before_exclaim]);
-            fsm.cursor.move_to(fsm.walker.post);
+            // i.e. cursor is pointing at the exclamation
+            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            let exclaim = fsm.cursor.move_to(fsm.walker.post);
+            let lexeme = fsm.emit_h_chord(&fsm.original[exclaim]);
             fsm.mark_body_start(); // @VOLATILE: after `emit_p_chord()`
             lexeme
         }
@@ -277,6 +277,10 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             Need '{{' to start an enumeration",
         )),
 
+        (_, Some('|' | '!' | ';')) => {
+            let before_head_end = fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_head(&fsm.original[before_head_end])
+        }
         _ => Ok(None),
     }
 }
@@ -317,10 +321,12 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
         }
 
         (';', _) => {
-            let before_semicolon = fsm.cursor.move_to(fsm.walker.prev);
+            // i.e. cursor is pointing at semicolon
+            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            let semicolon = fsm.cursor.move_to(fsm.walker.post);
             fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
-            fsm.emit_hc_chord(&fsm.original[before_semicolon])
+            fsm.emit_hc_chord(&fsm.original[semicolon])
         }
         // @VOLATILE: This should be the last of the non-errors
         //            in case one of the our symbols is in SEPARATOR
@@ -335,6 +341,12 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             "Missing a second closing curly brace. \
             Need '}}' to close an enumeration",
         )),
+
+        (_, Some(';')) => {
+            let before_chord_end = fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_h_choice(&fsm.original[before_chord_end])
+        }
+
         _ => Ok(None),
     }
 }
@@ -481,8 +493,8 @@ impl<'a> Fsm<'a> {
 // Although they are all only called once or twice, these consolidate the math
 //
 // There are three calculations:
-// 1. The number of brackets groups '{{' '}}' ('member_h_max', 'member_b_max')
-//    This is measuring the fattest bracket group
+// 1. The number of members in brackets groups '{{' '}}' ('member_h_max',
+//    'member_b_max'). This is measuring the fattest bracket group
 // 2. The count for size required by the parser ('h_group_size', 'b_group_size')
 //    For head, this measures conservatively along chord boundaries
 //    For body, we can get exact measures
@@ -510,16 +522,6 @@ impl<'a> Fsm<'a> {
         // Inside of '{{' and '}}'
         emit_h_choice(self, frag) Ok(Some(Lexeme::HChoice(self.member_num, frag)))
 
-        // Before closing '!', closing '|', and ';'
-        emit_h_chord(self, frag) {
-            self.h_group_size.0 += 1;
-            Ok(Some(Lexeme::ChordEndK(frag)))
-        }
-        emit_hc_chord(self, frag) {
-            self.h_group_size.1 += 1;
-            Ok(Some(Lexeme::ChordEndHC(self.member_num, frag)))
-        }
-
         // Outside of body '{{' and '}}'
         emit_body(self, frag) {
             self.b_group_size.0 += 1;
@@ -531,6 +533,22 @@ impl<'a> Fsm<'a> {
             Ok(Some(Lexeme::BChoice(self.member_num, frag)))
         }
     }
+    // Before closing '!', closing '|', and ';'
+    #[inline]
+    fn emit_h_chord(&mut self, frag: &'a str) -> PassOutput<'a> {
+        debug_assert!(frag == "|"  || frag == "!" || frag == ";");
+        self.fragment_len += 1;
+        self.h_group_size.0 += 1;
+        Ok(Some(Lexeme::ChordDelimH(frag)))
+    }
+    #[inline]
+    fn emit_hc_chord(&mut self, frag: &'a str) -> PassOutput<'a> {
+        debug_assert!(frag == ";");
+        self.fragment_len += 1;
+        self.h_group_size.1 += 1;
+        Ok(Some(Lexeme::ChordDelimHC(self.member_num, frag)))
+    }
+
     // Inside of body '{{' and '}}', when before ','
     #[inline]
     fn emit_b_member(&mut self, frag: &'a str) -> PassOutput<'a> {

@@ -141,12 +141,17 @@ fn parse_work(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
             let body = &lexemes[stats.body..stats.tail];
             parse_head_lex_into_chords(&mut storage, stats, head)?;
             parse_body_lex_into_scripts(&mut storage, stats, body);
-            //Ok((head, body))
-            Ok(())
+            // Do not actually care about the 'Ok()' case, mostly for debug
+            Ok((head, body))
         })
+        //.map(|result| {
+        //    if let Ok(a) = result {
+        //        println!("{:?}\n{:?}\n----", a.0,a.1);
+        //    }
+        //    result
+        //})
         .find(Result::is_err)
-        //.for_each(|a| println!("{:?}\n{:?}\n----", a.0,a.1));
-        .unwrap_or(Ok(()))?;
+        .unwrap_or(Ok((&[], &[])))?;
 
     //chords.iter().for_each(|a| println!("{:?}", a.sources));
     //scripts.iter().for_each(|a| println!("{:?}", a.sources));
@@ -154,6 +159,9 @@ fn parse_work(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
 
     //            let body = body.iter().filter_map(|l| body_lexeme_to_str(i, l)).collect::<Vec<_>>().join("");
 
+    debug_assert_eq!(chords.len(), head_aggregate_size);
+    debug_assert_eq!(scripts.len(), body_aggregate_size);
+    debug_assert_eq!(shortcuts.len(), permutation_count);
     Ok(ShortcutOwner {
         chords,
         scripts,
@@ -246,17 +254,15 @@ fn parse_head_lex_into_chords<'filestr>(
                     chord.add(k, keys_added)?;
                     keys_added += 1;
                 }
-                Lexeme::ChordEndK(k) => {
-                    chord.add(k, keys_added)?;
-                    keys_added = 0;
+                Lexeme::ChordDelimH(_) => {
                     index += 1;
-                }
-                Lexeme::ChordEndHC(choice, k) if *choice == i => {
-                    chord.add(k, keys_added)?;
                     keys_added = 0;
-                    index += 1;
                 }
-                Lexeme::HChoice(_, _) | Lexeme::ChordEndHC(_, _) => {}
+                Lexeme::ChordDelimHC(choice, _) if *choice == i => {
+                    index += 1;
+                    keys_added = 0;
+                }
+                Lexeme::HChoice(_, _) | Lexeme::ChordDelimHC(_, _) => {}
                 _ => unreachable!("{:?}", lexeme),
             }
         }
@@ -298,7 +304,7 @@ fn parse_body_lex_into_scripts<'a, 'filestr>(
 
 impl<'filestr> Chord<'filestr> {
     fn add(&mut self, key: &'filestr str, keys_added: usize) -> Output {
-        //Result<Self, MarkupError> {
+        //println!("{}", self);
         if let Some(m) = MODIFIERS.iter().position(|m| *m == key) {
             let as_flag = 1 << m;
             if self.modifiers & as_flag == 0 {
