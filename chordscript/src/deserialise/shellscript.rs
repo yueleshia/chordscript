@@ -1,5 +1,5 @@
 use crate::deserialise::{default_print_chord, Print, TrimEscapeStrList};
-use crate::parser::ShortcutOwner;
+use crate::parser::shortcuts::ShortcutOwner;
 use crate::structs::Shortcut;
 use crate::{array, precalculate_capacity_and_build};
 

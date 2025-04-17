@@ -1,6 +1,6 @@
 use crate::constants::KEYCODES;
 use crate::deserialise::{DeserialisedChord, default_print_chord, Print};
-use crate::keyspace::{Action, KeyspaceOwner};
+use crate::parser::keyspaces::{Action, KeyspaceOwner};
 use crate::structs::{Chord, Shortcut};
 use crate::{array, define_buttons, precalculate_capacity_and_build};
 

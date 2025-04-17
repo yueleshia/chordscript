@@ -1,6 +1,6 @@
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::deserialise::{Print, TrimEscapeStrList};
-use crate::parser::ShortcutOwner;
+use crate::parser::shortcuts::ShortcutOwner;
 use crate::precalculate_capacity_and_build;
 use crate::structs::{Chord, Shortcut};
 use super::DeserialisedChord;

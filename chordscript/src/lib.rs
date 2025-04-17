@@ -9,16 +9,90 @@
 mod constants;
 pub mod deserialise;
 mod errors;
-pub mod keyspace;
-pub mod lexer;
 mod macros;
 pub mod parser;
 mod reporter;
 mod structs;
 
+pub use crate::parser::{lexemes, shortcuts, keyspaces};
+
 /****************************************************************************
- * Stuff
+ * Integration Tests
  ****************************************************************************/
+#[test]
+fn on_file() {
+    use crate::deserialise::Print;
+    use crate::deserialise::PrintError;
+
+    let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
+    let file = std::fs::read_to_string(path).unwrap();
+    let _lexemes = lexemes::lex(&file).or_die(1);
+    //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
+    //println!("\n~~~~~~\n");
+    let _parseme_owner = shortcuts::parse_unsorted(_lexemes).or_die(1);
+    //println!("{}", deserialise::ListAll(&_parseme_owner).to_string_custom());
+    let _shortcuts = _parseme_owner.to_iter().collect::<Vec<_>>();
+
+    // I should not use len() check with externally defined file, but it is
+    // the quickest check to see if we altered the algorithm significantly
+    println!("~~~~\n{}", _shortcuts.len());
+    debug_assert_eq!(_shortcuts.len(), 106);
+    deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
+    deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
+    println!("~~~~");
+    //let _keyspaces = keyspace::process(&_parseme_owner);
+    //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
+}
+
+//#[test]
+fn _interpret() {
+    let _file = r#"
+#
+#hello
+|super {{, alt, ctrl, ctrl alt}} Return|
+  {{$TERMINAL, alacritty, \
+  st, sakura}} -e tmux.sh open
+|super {{c, t, g, k}} ; super {{b,s}}|
+  $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
+{{{| cat -}}}
+#|| echo asdf
+#|super;| echo yo
+#|| echo yo
+#|super shift q; t|echo {{3349\, 109324}}
+|super shift q|"#;
+
+    let _file = r#"
+#
+#hello
+|super {{, alt, ctrl, ctrl alt}} Return|
+  {{$TERMINAL, alacritty, \
+  st, sakura}} -e tmux.sh open
+|super {{c, t, g, k}} ; super {{b,s}}|
+  $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
+{{{| cat -}}}jam
+|super shift q|"#;
+    //println!("{}", _file);
+
+    if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
+        let _lexemes = lexemes::lex(_file)?;
+        //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
+
+        let _parsemes = shortcuts::parse(_lexemes)?;
+        //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
+        let _keyspaces = keyspaces::process(&_parsemes);
+        //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+        //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
+        Ok(())
+    })() {
+        println!("{}", err);
+    }
+}
+
+pub fn add(input: &str) -> String {
+    let mut output = input.to_string();
+    output.push_str("asdfasdf");
+    output
+}
 
 //fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
 //    // Must be macro as need to own 'file' in this namespace
@@ -108,80 +182,3 @@ mod structs;
 //    Ok(())
 //}
 
-/****************************************************************************
- * Integration Tests
- ****************************************************************************/
-#[test]
-fn on_file() {
-    use crate::deserialise::Print;
-    use crate::deserialise::PrintError;
-
-    let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
-    let file = std::fs::read_to_string(path).unwrap();
-    let _lexemes = lexer::lex(&file).or_die(1);
-    //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
-    //println!("\n~~~~~~\n");
-    let _parseme_owner = parser::parse_unsorted(_lexemes).or_die(1);
-    //println!("{}", deserialise::ListAll(&_parseme_owner).to_string_custom());
-    let _shortcuts = _parseme_owner.to_iter().collect::<Vec<_>>();
-
-    // I should not use len() check with externally defined file, but it is
-    // the quickest check to see if we altered the algorithm significantly
-    println!("~~~~\n{}", _shortcuts.len());
-    debug_assert_eq!(_shortcuts.len(), 101);
-    deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
-    deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
-    println!("~~~~");
-    //let _keyspaces = keyspace::process(&_parseme_owner);
-    //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
-}
-
-//#[test]
-fn _interpret() {
-    let _file = r#"
-#
-#hello
-|super {{, alt, ctrl, ctrl alt}} Return|
-  {{$TERMINAL, alacritty, \
-  st, sakura}} -e tmux.sh open
-|super {{c, t, g, k}} ; super {{b,s}}|
-  $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
-{{{| cat -}}}
-#|| echo asdf
-#|super;| echo yo
-#|| echo yo
-#|super shift q; t|echo {{3349\, 109324}}
-|super shift q|"#;
-
-    let _file = r#"
-#
-#hello
-|super {{, alt, ctrl, ctrl alt}} Return|
-  {{$TERMINAL, alacritty, \
-  st, sakura}} -e tmux.sh open
-|super {{c, t, g, k}} ; super {{b,s}}|
-  $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
-{{{| cat -}}}jam
-|super shift q|"#;
-    //println!("{}", _file);
-
-    if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
-        let _lexemes = lexer::lex(_file)?;
-        //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
-
-        let _parsemes = parser::parse(_lexemes)?;
-        //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
-        let _keyspaces = keyspace::process(&_parsemes);
-        //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
-        //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
-        Ok(())
-    })() {
-        println!("{}", err);
-    }
-}
-
-pub fn add(input: &str) -> String {
-    let mut output = input.to_string();
-    output.push_str("asdfasdf");
-    output
-}

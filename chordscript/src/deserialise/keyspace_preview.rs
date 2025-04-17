@@ -1,6 +1,6 @@
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::deserialise::{Print, TrimEscapeStrList};
-use crate::keyspace::{Action, KeyspaceOwner};
+use crate::parser::keyspaces::{Action, KeyspaceOwner};
 use crate::structs::{Chord, Shortcut};
 use crate::{array, precalculate_capacity_and_build};
 use super::DeserialisedChord;

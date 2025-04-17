@@ -1,6 +1,6 @@
 use std::fs;
 use chordscript::deserialise::Print;
-use chordscript::keyspace;
+use chordscript::parser::keyspaces;
 
 mod flags {
     #![allow(unused)]
@@ -79,19 +79,10 @@ fn main() {
                     }
                 };
 
-                let lexemes = match chordscript::lexer::lex(&shortcutrc) {
-                    Ok(a) => a,
-                    Err(err) => {
-                        err.print_stderr();
-                        std::process::exit(1)
-                    }
-                };
-                let ast = chordscript::lexer::lex(&shortcutrc)
-                    .and_then(|lexemes| chordscript::parser::parse_unsorted(lexemes))
-                    .unwrap_or_else(|err| {
-                        err.print_stderr();
-                        std::process::exit(1)
-                    });
+                let ast = chordscript::parser::parse_to_shortcuts(&shortcutrc).unwrap_or_else(|err| {
+                    err.print_stderr();
+                    std::process::exit(1)
+                });
 
                 let framework = match framework {
                     Ok(a) => a,
@@ -107,7 +98,7 @@ fn main() {
                     (F::DebugShortcuts, _) => chordscript::deserialise::ListAll(&ast).print_stdout(),
                     (F::Shell, None) => chordscript::deserialise::ListAll(&ast).print_stdout(),
                     //("i3", None) => chordscript::deserialise::I3(&keyspace::process(&ast)).print_stdout(),
-                    (F::I3, Some(_)) => chordscript::deserialise::I3Shell(&keyspace::process(&ast)).print_stdout(),
+                    (F::I3, Some(_)) => chordscript::deserialise::I3Shell(&keyspaces::process(&ast)).print_stdout(),
                     //"keyspace" => chordscript::deser
                     (_, None) => {
                         eprintln!("{} must have shell runner.", framework_str);

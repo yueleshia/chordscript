@@ -5,7 +5,7 @@ use std::cmp;
 use std::mem;
 use std::ops::Range;
 
-use crate::parser::ShortcutOwner;
+use super::shortcuts::ShortcutOwner;
 use crate::structs::{Chord, Cursor, Hotkey, Shortcut};
 
 /****************************************************************************
