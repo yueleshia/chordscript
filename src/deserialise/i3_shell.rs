@@ -14,6 +14,7 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Shell<'keyspaces, 'parsemes, '
         let first = iter.next().unwrap();
         let mode = "\nmode \"";
         let mode_begin = "\" {\n";
+        let escape_mode = "  bindsym Escape mode \"default\"\n";
         let mode_close = "}\n";
         let padding = "  ";
     } {
@@ -21,9 +22,10 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Shell<'keyspaces, 'parsemes, '
             => array!(@push { first.actions } |> "", I3Action, "\n", |> buffer);
 
         iter.map(|ks| mode.len()
-            + array!(@len { ks.title } |> "", i3_wrap_title, "")
+            + array!(@len_join { ks.title } |> i3_wrap_title, ";")
             + mode_begin.len()
             + array!(@len { ks.actions } |> padding, I3Action, "\n")
+            + escape_mode.len()
             + mode_close.len()
         ).sum::<usize>() => iter.for_each(|ks| {
             buffer.push_str(mode);
@@ -32,9 +34,10 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Shell<'keyspaces, 'parsemes, '
                 !array!(@to_string { ks.title } |> i3_wrap_title).contains('"')
             );
 
-            array!(@push { ks.title } |> "", i3_wrap_title, "", |> buffer);
+            array!(@push_join { ks.title } |> i3_wrap_title, ";", |> buffer);
             buffer.push_str(mode_begin);
             array!(@push { ks.actions } |> padding, I3Action, "\n", |> buffer);
+            buffer.push_str(escape_mode);
             buffer.push_str(mode_close);
         });
     });
@@ -44,27 +47,27 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
     precalculate_capacity_and_build!(self, buffer {
         let bind = "bindsym ";
         let set_mode = " mode \"";
-        let exec = " exec --no-startup-id ";
-        let close = "\"";
+        let set_close = "\"";
+        let exec = " exec --no-startup-id \"";
+        let command_close = "'\"; mode \"default\"";
 
         let trigger = i3_wrap_chord(self.0.key_trigger());
-        let runner = "hotkey.sh ";
+        let runner = "shortcuts.sh '";
     } {
         match &self.0 {
             Action::SetState(title) =>
                 bind.len()
                     + trigger.string_len()
                     + set_mode.len()
-                    + array!(@len_join { title } |> i3_wrap_title, " ; ")
-                    + close.len(),
+                    + array!(@len_join { title } |> i3_wrap_title, ";")
+                    + set_close.len(),
             Action::Command(_, Shortcut { hotkey, .. }) =>
                 bind.len()
                     + trigger.string_len()
                     + exec.len()
                     + runner.len()
-                    + 1
                     + array!(@len_join { hotkey } |> ListChord, " ; ")
-                    + 1,
+                    + command_close.len(),
         } => match &self.0 {
             Action::SetState(title) => {
                 buffer.push_str(bind);
@@ -74,17 +77,16 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
                 debug_assert!(!trigger.to_string_custom().contains('"'));
 
                 buffer.push_str(set_mode);
-                array!(@push_join { title } |> i3_wrap_title, " ; ", |> buffer);
-                buffer.push_str(close);
+                array!(@push_join { title } |> i3_wrap_title, ";", |> buffer);
+                buffer.push_str(set_close);
             }
             Action::Command(_, Shortcut { hotkey, .. }) => {
                 buffer.push_str(bind);
                 trigger.push_string_into(buffer);
                 buffer.push_str(exec);
                 buffer.push_str(runner);
-                buffer.push('"');
                 array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
-                buffer.push('"');
+                buffer.push_str(command_close);
             }
         };
     });
