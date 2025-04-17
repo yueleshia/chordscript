@@ -1,5 +1,9 @@
+//run: cargo test -- --nocapture
+// run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
+
 use crate::constants::KEYCODES;
 use crate::constants::MODIFIERS;
+use crate::errors::parser as errors;
 use crate::lexer::{LexOutput, Lexeme, PostLexEntry};
 use crate::reporter::MarkupError;
 use crate::structs::{Chord, Shortcut, WithSpan};
@@ -7,13 +11,8 @@ use crate::structs::{Chord, Shortcut, WithSpan};
 use std::ops::Range;
 type Output<T> = Result<T, MarkupError>;
 
-//run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
-// run: cargo test
-
 #[derive(Debug)]
 pub struct ShortcutOwner<'filestr> {
-    //    // second Range<usize> will always be 0..0
-    //chords: Vec<WithSpan<'filestr, Chord>>,
     pub chords: Vec<Chord<'filestr>>,
     scripts: Vec<WithSpan<'filestr, ()>>,
     pub shortcuts: Vec<ShortcutPointer>,
@@ -37,7 +36,7 @@ impl<'filestr> ShortcutOwner<'filestr> {
         });
     }
 
-    pub fn to_iter<'owner>(&'owner self) -> impl Iterator<Item = Shortcut<'owner, 'filestr>> {
+    pub fn to_iter<'me>(&'me self) -> impl Iterator<Item = Shortcut<'me, 'filestr>> {
         self.shortcuts.iter().map(move |pointer| Shortcut {
             is_placeholder: pointer.is_placeholder,
             hotkey: &self.chords[pointer.head.start..pointer.head.end],
@@ -51,15 +50,16 @@ impl<'filestr> ShortcutOwner<'filestr> {
  ******************************************************************************/
 // Sorting is necessary for 'verify_no_overlap()'
 pub fn parse(input: LexOutput) -> Output<ShortcutOwner> {
-    let mut owner = parse_work(input)?;
+    let mut owner = parse_main(input)?;
     owner.sort();
     verify_no_overlap(&owner)?;
     Ok(owner)
 }
 
-// This
+// Although sorting is necessary for `verify_no_overlap()`, this will return
+// the original order of the shortcuts. Good for debugging.
 pub fn parse_unsorted(input: LexOutput) -> Output<ShortcutOwner> {
-    let mut owner = parse_work(input)?;
+    let mut owner = parse_main(input)?;
     let original_order = owner.shortcuts.clone();
     owner.sort();
     verify_no_overlap(&owner)?;
@@ -69,8 +69,10 @@ pub fn parse_unsorted(input: LexOutput) -> Output<ShortcutOwner> {
         shortcuts: original_order,
     })
 }
-fn parse_work(input: LexOutput) -> Output<ShortcutOwner> {
-    //let mut shortcuts: Vec<Chord> = Vec::with_capacity(input.head_aggregate_size);
+
+
+fn parse_main(input: LexOutput) -> Output<ShortcutOwner> {
+    //println!("{:#?}", input.entry_stats);
     let (permutation_count, head_aggregate_size, body_aggregate_size) =
         input.entry_stats.iter().fold((0, 0, 0), |(a, b, c), s| {
             (a + s.permutations, b + s.head_size, c + s.body_size)
@@ -95,6 +97,7 @@ fn parse_work(input: LexOutput) -> Output<ShortcutOwner> {
         permutation_count
     ];
     let mut slice_holder = Vec::with_capacity(input.entry_stats.len());
+    //println!("{} {:?}\n{} {:?}\n{} {:?}", chords.len(), chords, scripts.len(), scripts, shortcuts.len(), shortcuts);
 
     // Partition the memory into 'ThreadLocalStorage' chunks
     //
@@ -185,7 +188,7 @@ fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Output<()> {
                     a.hotkey == b.hotkey && a.command.as_ptr() == b.command.as_ptr()
                 })
         },
-        "You did not sort the array"
+        "DEV: You forgot to sort the array"
     );
 
     let mut iter = sorted_shortcuts.to_iter();
@@ -210,9 +213,12 @@ fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Output<()> {
                     .collect::<Vec<_>>()
                     .join(" ; ");
                 //MarkupError::from_str()
-                todo!("have not created span errors yet\n\
-                    {}\nconflicts with\n{}", prev_hotkey, curr_hotkey
-                    );
+                todo!(
+                    "have not created span errors yet\n\
+                    {}\nconflicts with\n{}",
+                    prev_hotkey,
+                    curr_hotkey
+                );
             } else {
                 Ok(curr)
             }
@@ -337,7 +343,7 @@ impl<'filestr> Chord<'filestr> {
             Err(MarkupError::from_str(
                 self.context,
                 key,
-                "Keycode not supported".into(),
+                errors::INVALID_KEY.to_string(),
             ))
         }
     }
