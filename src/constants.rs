@@ -69,7 +69,7 @@ build_available_keys! {
     pub const MODIFIERS: [&str; 4], Modifiers = {
         Alt => "alt", Ctrl => "ctrl", Shift => "shift", Super => "super",
     };
-    pub const KEYCODES: [&str; 48], Keycodes = {
+    pub const KEYCODES: [&str; 50], Keycodes = {
         Comma => ",",
         Period => ".",
         Zero => "0", One => "1", Two => "2", Thre => "3", Four => "4",
@@ -86,6 +86,8 @@ build_available_keys! {
         Return => "Return",
         BackSpace => "BackSpace",
         Semicolon => "semicolon",
+        XF86MonBrightnessUp => "XF86MonBrightnessUp",
+        XF86MonBrightnessDown => "XF86MonBrightnessDown",
     };
 }
 

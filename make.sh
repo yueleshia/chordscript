@@ -31,7 +31,7 @@ my_make() {
     # @TODO implement -r/--runner
     in i3-shell)
       parse "${XDG_CONFIG_HOME}/i3/config" i3-shell \
-        -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" #-r "shortcuts.sh"
+        -c "${SHORTCUTS}" -s "${HOME}/.local/bin/shortcuts.sh"
 
     ;; sh) run_parser sh -c "${SHORTCUTS}"
     ;; d|d*|debug-shortcuts) run_parser debug-shortcuts -c "${SHORTCUTS}"
@@ -47,7 +47,6 @@ my_make() {
 
 parse() {
   # $1: filepath of config file
-
   "${DEBUG}" && return
 
   [ -r "${1}" ] || die FATAL 1 "File '${1}' does not exist"
@@ -65,7 +64,7 @@ parse() {
     END { if (found) {} else { exit 1; } }
   ' || die FATAL 1 "Could not found CLOSE_MARKER" "${CLOSE_MARKER}"
 
-  # Replace
+  # Replace i3 marked text section
   <"${filepath}" replace_text_between_markers "$@" >"${TEMP}"
   cp "${TEMP}" "${filepath}"
 }
