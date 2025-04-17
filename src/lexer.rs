@@ -3,12 +3,13 @@
 use crate::constants::{KEYCODES, KEYSTR_UTF8_MAX_LEN, MODIFIERS, SEPARATOR};
 use crate::errors;
 use crate::reporter::MarkupError;
+use std::ops::Range;
 
 /******************************************************************************
  * Macros
  */
 macro_rules! define_syntax {
-    ($fsm:ident, $tokens:ident, $is_push:ident,
+    ($fsm:ident, $tokens:ident, $head_cursor:ident, $body_cursor:ident, $is_push:ident,
         $($state:ident {
             $(
                 $( $pattern:pat )|+ $( if $guard:expr )? => $runner:expr;
@@ -21,7 +22,7 @@ macro_rules! define_syntax {
 
         fn lex_syntax<'a>(
             $fsm: &mut FileIter<'a>,
-            $tokens: &mut LexemeLists<'a>,
+            ($tokens, $head_cursor, $body_cursor): &mut LexemeStream<'a>,
             item: <FileIter as Iterator>::Item,
             $is_push: bool,
         ) -> Result<LexerCapacities, MarkupError> {
@@ -37,8 +38,14 @@ macro_rules! define_syntax {
 }
 
 /******************************************************************************
- * Syntax
+ * Token definitions
  */
+#[derive(Debug)]
+pub struct Lexeme<'owner, 'filestr> {
+    pub head: &'owner [HeadLexeme],
+    pub body: &'owner [BodyLexeme<'filestr>],
+}
+
 #[derive(Debug)]
 pub enum HeadLexeme {
     Key(usize),
@@ -49,6 +56,7 @@ pub enum HeadLexeme {
     ChoiceDelim,
     ChoiceClose,
 }
+
 #[derive(Debug)]
 pub enum BodyLexeme<'a> {
     Section(&'a str),
@@ -57,8 +65,142 @@ pub enum BodyLexeme<'a> {
     ChoiceClose,
 }
 
+#[derive(Debug)]
+pub struct LexemeLists<'filestr> {
+    entries: Vec<(Range<usize>, Range<usize>)>,
+    head: Vec<HeadLexeme>,
+    body: Vec<BodyLexeme<'filestr>>,
+}
+
+impl<'filestr> LexemeLists<'filestr> {
+    fn new(capacity: LexerCapacities) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity.0),
+            head: Vec::with_capacity(capacity.1),
+            body: Vec::with_capacity(capacity.2),
+        }
+    }
+
+    fn head_push_key(
+        &mut self,
+        fsm: &FileIter<'filestr>,
+        keystr: &'filestr str,
+    ) -> Result<(), MarkupError> {
+        if keystr.is_empty() {
+            self.head.push(HeadLexeme::Blank);
+        } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
+            self.head.push(HeadLexeme::Mod(i));
+        } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
+            self.head.push(HeadLexeme::Key(i));
+        } else {
+            fsm.report(keystr, errors::HEAD_INVALID_KEY)?;
+        }
+        Ok(())
+    }
+
+    fn push_entry(&mut self, head_cursor: &mut Cursor, body_cursor: &mut Cursor) {
+        self.entries.push((
+            head_cursor.move_to(self.head.len()),
+            body_cursor.move_to(self.body.len()),
+        ));
+    }
+
+    pub fn to_iter(&self) -> impl Iterator<Item = Lexeme> {
+        self.entries
+            .iter()
+            .map(move |(head_range, body_range)| Lexeme {
+                head: &self.head[head_range.start..head_range.end],
+                body: &self.body[body_range.start..body_range.end],
+            })
+    }
+}
+
+/******************************************************************************
+ * Syntax
+ */
+// @TODO: Add test for Byte-Order Mark (BOM) ?
+pub fn process(filestr: &str) -> Result<LexemeLists, MarkupError> {
+    // Skip until first '|' at beginning of line
+    let filestr = {
+        let mut walker = filestr.chars();
+        let mut prev_ch = '\n';
+        loop {
+            match walker.next() {
+                Some('|') if prev_ch == '\n' => break,
+                Some(ch) => prev_ch = ch,
+                None => return Ok(LexemeLists::new((0, 0, 0))),
+            }
+        }
+        walker.as_str()
+    };
+
+    // Calculate the memory needed for the Arrays
+    let capacity = {
+        // @TODO figure out a way to not do this unnecessary allocation
+        let temp = &mut (LexemeLists::new((0, 0, 0)), Cursor(0), Cursor(0));
+        //let temp = std::ptr::null() as &mut LexemeLists;
+
+        let mut capacity = (1, 0, 1); // State::Body end not processed in loop
+        let fsm = &mut FileIter::new(filestr);
+        while let Some(item) = fsm.next() {
+            let (entries, head, body) = lex_syntax(fsm, temp, item, false)?;
+            capacity.0 += entries;
+            capacity.1 += head;
+            capacity.2 += body;
+        }
+
+        match fsm.state {
+            State::Head => panic!("Head not closed"),
+            State::HeadBrackets => panic!("Head bracket not closed"),
+            State::Body => {} // Then add 1
+            State::BodyLiteral => panic!("Body literal not closed"),
+            State::BodyBrackets => panic!("Body brackets not closed"),
+        }
+        capacity
+    };
+    //println!("{:?}", capacity);
+
+    // Lex into lexemes
+    let lexemes = {
+        let mut owner = (LexemeLists::new(capacity), Cursor(0), Cursor(0));
+        let lexemes_ref = &mut owner;
+        let fsm = &mut FileIter::new(filestr);
+        while let Some(item) = fsm.next() {
+            //println!("{} {:?} {:?}",
+            //    fsm.rindex,
+            //    item.0,
+            //    item.2.chars().take(20).collect::<String>()
+            //);
+            lex_syntax(fsm, lexemes_ref, item, true)?;
+        }
+
+        let last_body = &fsm.source[fsm.cursor.move_to(fsm.source.len())];
+        lexemes_ref.0.body.push(BodyLexeme::Section(last_body));
+        owner.0.push_entry(&mut owner.1, &mut owner.2);
+        owner.0
+    };
+
+    debug_assert_eq!(
+        lexemes.head.len(),
+        capacity.1,
+        "Memory for head is incorrect"
+    );
+    debug_assert_eq!(
+        lexemes.body.len(),
+        capacity.2,
+        "Memory for body is incorrect"
+    );
+    debug_assert_eq!(
+        lexemes.entries.len(),
+        capacity.0,
+        "Memory for entires is incorrect"
+    );
+
+    Ok(lexemes)
+}
+
 // Basically one glorified match with these three variables as arguments
-define_syntax! { fsm, tokens, is_push,
+define_syntax! { fsm, tokens, head_cursor, body_cursor, is_push,
     Head {
         (',', i, _) => fsm.report(
             &fsm.source[i..i + ','.len_utf8()],
@@ -73,8 +215,8 @@ define_syntax! { fsm, tokens, is_push,
         ('|', i, _) => {
             fsm.state = State::Body;
 
-            let till_close = fsm.cursor_move_to(i);
-            fsm.cursor_move_to(i + '|'.len_utf8());
+            let till_close = &fsm.source[fsm.cursor.move_to(i)];
+            fsm.cursor.move_to(i + '|'.len_utf8());
             // No eating separator while in State::Body
 
             if is_push {
@@ -87,13 +229,13 @@ define_syntax! { fsm, tokens, is_push,
             if let Some(('{', _, _)) = fsm.next() { // Second '{'
                 fsm.state = State::HeadBrackets;
 
-                let till_bracket = fsm.cursor_move_to(i);
+                let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
                 fsm.eat_charlist(&SEPARATOR);
-                fsm.cursor_move_to(fsm.rindex);
+                fsm.cursor.move_to(fsm.rindex);
 
                 if is_push {
                     tokens.head_push_key(fsm, till_bracket)?;
-                    tokens.heads.push(HeadLexeme::ChoiceBegin);
+                    tokens.head.push(HeadLexeme::ChoiceBegin);
                 }
                 Ok((0, 2, 0))
             } else {
@@ -105,14 +247,14 @@ define_syntax! { fsm, tokens, is_push,
         };
 
         (ch, i, _) if ch == ';' || SEPARATOR.contains(&ch) => {
-            let till_punctuation = fsm.cursor_move_to(i);
+            let till_punctuation = &fsm.source[fsm.cursor.move_to(i)];
             fsm.eat_charlist(&SEPARATOR);
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
 
             if is_push {
                 tokens.head_push_key(fsm, till_punctuation)?;
                 if ch == ';' {
-                    tokens.heads.push(HeadLexeme::ChordDelim);
+                    tokens.head.push(HeadLexeme::ChordDelim);
                 }
             }
             match ch {
@@ -123,7 +265,7 @@ define_syntax! { fsm, tokens, is_push,
 
 
         (_, i, _) => {
-            if fsm.cursor_width(i) > KEYSTR_UTF8_MAX_LEN {
+            if fsm.cursor.width(i) > KEYSTR_UTF8_MAX_LEN {
                 panic!("Panic at the disco")
             } else {
                 Ok((0, 0, 0))
@@ -146,13 +288,13 @@ define_syntax! { fsm, tokens, is_push,
             if let Some(('}', _, _)) = fsm.next() { // second '}'
                 fsm.state = State::Head;
 
-                let till_bracket = fsm.cursor_move_to(i);
+                let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
                 fsm.eat_charlist(&SEPARATOR);
-                fsm.cursor_move_to(fsm.rindex);
+                fsm.cursor.move_to(fsm.rindex);
 
                 if is_push {
                     tokens.head_push_key(fsm, till_bracket)?;
-                    tokens.heads.push(HeadLexeme::ChoiceClose);
+                    tokens.head.push(HeadLexeme::ChoiceClose);
                 }
                 Ok((0, 2, 0))
             } else {
@@ -164,14 +306,14 @@ define_syntax! { fsm, tokens, is_push,
         };
 
         (ch, i, _) if ch == ';' || ch == ',' || SEPARATOR.contains(&ch) => {
-            let till_punctuation= fsm.cursor_move_to(i);
+            let till_punctuation= &fsm.source[fsm.cursor.move_to(i)];
             fsm.eat_charlist(&SEPARATOR);
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
             if is_push {
                 tokens.head_push_key(fsm, till_punctuation)?;
                 match ch {
-                    ';' => tokens.heads.push(HeadLexeme::ChordDelim),
-                    ',' => tokens.heads.push(HeadLexeme::ChoiceDelim),
+                    ';' => tokens.head.push(HeadLexeme::ChordDelim),
+                    ',' => tokens.head.push(HeadLexeme::ChoiceDelim),
                     _ => {}
                 }
             }
@@ -182,7 +324,7 @@ define_syntax! { fsm, tokens, is_push,
         };
 
         (_, i, _) => {
-            if fsm.cursor_width(i) > KEYSTR_UTF8_MAX_LEN {
+            if fsm.cursor.width(i) > KEYSTR_UTF8_MAX_LEN {
                 panic!("Panic at the disco")
             } else {
                 Ok((0, 0, 0))
@@ -195,27 +337,28 @@ define_syntax! { fsm, tokens, is_push,
         ('\n', i, rest) if rest.starts_with("\n|") => {
             fsm.state = State::Head;
 
-            let include_newline = fsm.cursor_move_to(i + 1);
+            let include_newline = &fsm.source[fsm.cursor.move_to(i)];
             fsm.next(); // Skip '|'
             fsm.eat_charlist(&SEPARATOR); // Eat cause in State::Head
-            fsm.cursor_move_to(i + "\n|".len());
+            fsm.cursor.move_to(i + "\n|".len());
 
             if is_push {
-                tokens.bodys.push(BodyLexeme::Section(include_newline));
+                tokens.body.push(BodyLexeme::Section(include_newline));
+                tokens.push_entry(head_cursor, body_cursor);
             }
-            Ok((0, 0, 1))
+            Ok((1, 0, 1))
         };
 
         (_, i, rest) if rest.starts_with("{{{") => {
             fsm.state = State::BodyLiteral;
 
-            let till_bracket = fsm.cursor_move_to(i);
+            let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
             fsm.next(); // Skip second '{'
             fsm.next(); // Skip third '{'
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
 
             if is_push {
-                tokens.bodys.push(BodyLexeme::Section(till_bracket));
+                tokens.body.push(BodyLexeme::Section(till_bracket));
             }
             Ok((0, 0, 1))
         };
@@ -223,13 +366,13 @@ define_syntax! { fsm, tokens, is_push,
         ('{', i, _) if matches!(fsm.peek, Some('{')) => {
             fsm.state = State::BodyBrackets;
 
-            let till_bracket = fsm.cursor_move_to(i);
+            let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
             fsm.next(); // Skip second '{'
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
 
             if is_push {
-                tokens.bodys.push(BodyLexeme::Section(till_bracket));
-                tokens.bodys.push(BodyLexeme::ChoiceBegin);
+                tokens.body.push(BodyLexeme::Section(till_bracket));
+                tokens.body.push(BodyLexeme::ChoiceBegin);
             }
             Ok((0, 0, 2))
         };
@@ -239,18 +382,18 @@ define_syntax! { fsm, tokens, is_push,
 
     BodyLiteral {
         ('\\', i, _) => {
-            let till_backslash = fsm.cursor_move_to(i);
+            let till_backslash = &fsm.source[fsm.cursor.move_to(i)];
             match fsm.next() {
                 Some(('\n', _, _)) => {
-                    fsm.cursor_move_to(fsm.rindex);
-                    tokens.bodys.push(BodyLexeme::Section(till_backslash));
+                    fsm.cursor.move_to(fsm.rindex);
+                    tokens.body.push(BodyLexeme::Section(till_backslash));
                     Ok((0, 0, 1))
                 }
                 Some((ch, _, _)) => {
-                    fsm.cursor_move_to(fsm.rindex);
+                    fsm.cursor.move_to(fsm.rindex);
                     let escaped = &fsm.source[i..i + ch.len_utf8()];
-                    tokens.bodys.push(BodyLexeme::Section(till_backslash));
-                    tokens.bodys.push(BodyLexeme::Section(escaped));
+                    tokens.body.push(BodyLexeme::Section(till_backslash));
+                    tokens.body.push(BodyLexeme::Section(escaped));
                     Ok((0, 0, 2))
                 }
                 // Let the final '\\' exist by itself
@@ -261,13 +404,13 @@ define_syntax! { fsm, tokens, is_push,
         (_, i, rest) if rest.starts_with("}}}") => {
             fsm.state = State::Body;
 
-            let till_bracket = fsm.cursor_move_to(i);
+            let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
             fsm.next(); // Skip second '}'
             fsm.next(); // Skip third '}'
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
 
             if is_push {
-                tokens.bodys.push(BodyLexeme::Section(till_bracket));
+                tokens.body.push(BodyLexeme::Section(till_bracket));
             }
             Ok((0, 0, 1))
         };
@@ -279,30 +422,30 @@ define_syntax! { fsm, tokens, is_push,
         ('}', i, _) if matches!(fsm.peek, Some('}')) => {
             fsm.state = State::Body;
 
-            let till_bracket = fsm.cursor_move_to(i);
+            let till_bracket = &fsm.source[fsm.cursor.move_to(i)];
             fsm.next(); // Skip second '}'
-            fsm.cursor_move_to(fsm.rindex);
+            fsm.cursor.move_to(fsm.rindex);
 
             if is_push {
-                tokens.bodys.push(BodyLexeme::Section(till_bracket));
-                tokens.bodys.push(BodyLexeme::ChoiceClose);
+                tokens.body.push(BodyLexeme::Section(till_bracket));
+                tokens.body.push(BodyLexeme::ChoiceClose);
             }
             Ok((0, 0, 2))
         };
 
         ('\\', i, _) => {
-            let till_backslash = fsm.cursor_move_to(i);
+            let till_backslash = &fsm.source[fsm.cursor.move_to(i)];
             match fsm.next() {
                 Some(('\n', _, _)) => {
-                    fsm.cursor_move_to(fsm.rindex);
-                    tokens.bodys.push(BodyLexeme::Section(till_backslash));
+                    fsm.cursor.move_to(fsm.rindex);
+                    tokens.body.push(BodyLexeme::Section(till_backslash));
                     Ok((0, 0, 1))
                 }
                 Some((ch, _, _)) => {
-                    fsm.cursor_move_to(fsm.rindex);
+                    fsm.cursor.move_to(fsm.rindex);
                     let escaped = &fsm.source[i..i + ch.len_utf8()];
-                    tokens.bodys.push(BodyLexeme::Section(till_backslash));
-                    tokens.bodys.push(BodyLexeme::Section(escaped));
+                    tokens.body.push(BodyLexeme::Section(till_backslash));
+                    tokens.body.push(BodyLexeme::Section(escaped));
                     Ok((0, 0, 2))
                 }
                 // Let the final '\\' exist by itself
@@ -311,10 +454,10 @@ define_syntax! { fsm, tokens, is_push,
         };
 
         (',', i, _) => {
-            let till_comma = fsm.cursor_move_to(i);
-            fsm.cursor_move_to(fsm.rindex);
-            tokens.bodys.push(BodyLexeme::Section(till_comma));
-            tokens.bodys.push(BodyLexeme::ChoiceDelim);
+            let till_comma = &fsm.source[fsm.cursor.move_to(i)];
+            fsm.cursor.move_to(fsm.rindex);
+            tokens.body.push(BodyLexeme::Section(till_comma));
+            tokens.body.push(BodyLexeme::ChoiceDelim);
             Ok((0, 0, 2))
         };
 
@@ -322,121 +465,30 @@ define_syntax! { fsm, tokens, is_push,
     }
 }
 
-// @TODO: Add test for Byte-Order Mark (BOM) ?
-pub fn process(filestr: &str) -> Result<LexemeLists, MarkupError> {
-    // Skip until first '|' at beginning of line
-    let filestr = {
-        let mut walker = filestr.chars();
-        let mut ch = '\n';
-        while let Some(next_ch) = walker.next() {
-            if ch == '\n' && next_ch == '|' {
-                break;
-            }
-            ch = next_ch;
-        }
-        walker.as_str()
-    };
-
-    // Calculate the memory needed for the Arrays
-    let capacity = {
-        // @TODO figure out a way to not do this unnecessary allocation
-        let temp = &mut LexemeLists::new((0, 0, 0));
-        //let temp = std::ptr::null() as &mut LexemeLists;
-
-        let mut capacity = (0, 0, 1); // State::Body end not processed in loop
-        let fsm = &mut FileIter::new(filestr);
-        while let Some(item) = fsm.next() {
-            let (entries, head, body) = lex_syntax(fsm, temp, item, false)?;
-            capacity.0 += entries;
-            capacity.1 += head;
-            capacity.2 += body;
-        }
-
-        match fsm.state {
-            State::Head => panic!("Head not closed"),
-            State::HeadBrackets => panic!("Head bracket not closed"),
-            State::Body => {}
-            State::BodyLiteral => panic!("Body literal not closed"),
-            State::BodyBrackets => panic!("Body brackets not closed"),
-        }
-        capacity
-    };
-    //println!("{:?}", capacity);
-
-    // Lex into lexemes
-    let lexemes = {
-        let mut owner = LexemeLists::new(capacity);
-        let lexemes_ref = &mut owner;
-        let fsm = &mut FileIter::new(filestr);
-        while let Some(item) = fsm.next() {
-            //println!("{} {:?} {:?}",
-            //    fsm.rindex,
-            //    item.0,
-            //    item.2.chars().take(20).collect::<String>()
-            //);
-            lex_syntax(fsm, lexemes_ref, item, true)?;
-        }
-
-        let last_body = fsm.cursor_move_to(fsm.source.len());
-        lexemes_ref.bodys.push(BodyLexeme::Section(last_body));
-        owner
-    };
-
-    debug_assert!(
-        lexemes.heads.len() == capacity.1,
-        "{} != {}",
-        lexemes.heads.len(),
-        capacity.1
-    );
-    debug_assert!(
-        lexemes.bodys.len() == capacity.2,
-        "{} != {}",
-        lexemes.bodys.len(),
-        capacity.2
-    );
-
-    Ok(lexemes)
-}
-
 /******************************************************************************
  * Lexer Control-Flow Structs
  */
+
+struct Cursor(usize);
+impl Cursor {
+    fn move_to(&mut self, index: usize) -> Range<usize> {
+        debug_assert!(index >= self.0);
+        let from = self.0;
+        self.0 = index;
+        from..index
+    }
+    fn width(&self, index: usize) -> usize {
+        debug_assert!(index >= self.0);
+        index - self.0
+    }
+}
+
 type LexerCapacities = (usize, usize, usize);
+type LexemeStream<'a> = (LexemeLists<'a>, Cursor, Cursor);
 
-// TODO: implement iterator and make these not public
-pub struct LexemeLists<'a> {
-    pub entries: Vec<(usize, usize)>,
-    pub heads: Vec<HeadLexeme>,
-    pub bodys: Vec<BodyLexeme<'a>>,
-}
-
-impl<'a> LexemeLists<'a> {
-    fn new(capacity: LexerCapacities) -> Self {
-        Self {
-            entries: Vec::with_capacity(capacity.0),
-            heads: Vec::with_capacity(capacity.1),
-            bodys: Vec::with_capacity(capacity.2),
-        }
-    }
-
-    fn head_push_key(&mut self, fsm: &FileIter<'a>, keystr: &'a str) -> Result<(), MarkupError> {
-        if keystr.is_empty() {
-            self.heads.push(HeadLexeme::Blank);
-        } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
-            self.heads.push(HeadLexeme::Mod(i));
-        } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
-            self.heads.push(HeadLexeme::Key(i));
-        } else {
-            fsm.report(keystr, errors::HEAD_INVALID_KEY)?;
-        }
-        Ok(())
-    }
-
-    //fn push_into_head(&mut self, head_lexeme: HeadLexeme<'a>, source: &'a str) {
-    //    self.heads.push(source, head_lexeme);
-    //}
-}
-
+// This owns the data that represents our token streams
+// Info specific to the 'to_push' = true branch of the lexer
+//
 struct FileIter<'a> {
     source: &'a str,
     state: State,
@@ -444,7 +496,7 @@ struct FileIter<'a> {
     peek: Option<char>,
     rest: &'a str,
     rindex: usize,
-    cursor: usize,
+    cursor: Cursor,
 }
 impl<'a> FileIter<'a> {
     fn new(source: &'a str) -> Self {
@@ -457,20 +509,9 @@ impl<'a> FileIter<'a> {
             rest: source,
             peek,
             rindex: 0,
-            cursor: 0,
+            cursor: Cursor(0),
         }
     }
-    fn cursor_move_to(&mut self, index: usize) -> &'a str {
-        debug_assert!(index >= self.cursor);
-        let from = self.cursor;
-        self.cursor = index;
-        &self.source[from..index]
-    }
-
-    fn cursor_width(&mut self, index: usize) -> usize {
-        index - self.cursor
-    }
-
     fn eat_charlist(&mut self, list: &[char]) {
         while let Some(ch) = self.peek {
             if list.contains(&ch) {
@@ -481,7 +522,7 @@ impl<'a> FileIter<'a> {
         }
     }
 
-    fn report(&'a self, span: &'a str, message: &str) -> Result<LexerCapacities, MarkupError> {
+    fn report(&self, span: &'a str, message: &str) -> Result<LexerCapacities, MarkupError> {
         Err(MarkupError::new(&self.source, span, message.to_string()))
     }
 }
