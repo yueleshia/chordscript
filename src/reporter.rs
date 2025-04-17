@@ -153,10 +153,12 @@ fn line_offset_to_width(context: &str, line: &str, index: usize) -> usize {
     }
 }
 
-// TODO: Delegating print source and rows to error enum `CliError`
+// @TODO Delegating print source and rows to error enum `CliError`
 impl fmt::Display for MarkupError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(self.to_string_custom().as_str())
+        let buffer = &mut String::with_capacity(self.string_len());
+        self.push_string_into(buffer);
+        f.write_str(buffer.as_str())
     }
 }
 

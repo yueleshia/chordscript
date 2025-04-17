@@ -43,7 +43,10 @@ use crate::structs::{Chord, Cursor, WithSpan};
 pub trait Print {
     fn string_len(&self) -> usize;
     fn push_string_into(&self, buffer: &mut String);
-    // @TODO cfg(debug) only
+
+    // @TODO impl a direct print to stdout buffer and benchmark
+
+    #[cfg(debug_assertions)]
     fn to_string_custom(&self) -> String;
 }
 
@@ -125,12 +128,13 @@ macro_rules! precalculate_capacity_and_build {
         }
 
         fn push_string_into(&$this, $buffer: &mut String) {
+            #[cfg(debug_assertions)]
             debug_assert!({ $this.to_string_custom(); true });
             $( $init )*
             $( $push; )*
         }
 
-        //#[cfg(Debug)]
+        #[cfg(debug_assertions)]
         fn to_string_custom(&$this) -> String {
             $( $init )*
             let capacity = $this.string_len();
