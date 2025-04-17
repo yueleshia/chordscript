@@ -32,7 +32,7 @@ jobs:
 
       - name: Build with rust wasm-pack
         run:  |
-          chordscript-wasm/make.sh '${{ env.publish }}'
+          chordscript-wasm/make.sh '${{ github.workspace }}/${{ env.publish }}'
           rm '${{ env.publish }}/.gitignore'
 
       # In repository settings, place public key in "Deploy Keys", place private key in "Secrets"
