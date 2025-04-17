@@ -1,651 +1,768 @@
-// run: cargo test -- --nocapture
-// run: cargo run list-debug -c $HOME/interim/hk/config.txt
-//run: cargo run keyspaces -c $HOME/interim/hk/config.txt
+use crate::constants::SEPARATOR;
+use std::mem::{replace, swap};
 
-use crate::constants::{KEYCODES, KEYSTR_UTF8_MAX_LEN, MODIFIERS, SEPARATOR};
-use crate::define_syntax;
-use crate::errors;
-use crate::reporter::MarkupError;
-use crate::structs::{Cursor, WithSpan};
-use std::ops::Range;
+// For escaping during the lexer phase, State::BEscape
+// We introduce a new value with "\n" not in the original text.
+// An alternative is changing Lexeme::Choice to accept an 'char' or '&str'
+const NEWLINE: &str = "\n";
 
-/****************************************************************************
- * Token definitions
- ****************************************************************************/
-#[derive(Debug)]
-pub struct Lexeme<'owner, 'filestr> {
-    pub head: &'owner [WithSpan<'filestr, HeadType>],
-    pub body: &'owner [WithSpan<'filestr, BodyType>],
-}
+type Range = std::ops::Range<usize>;
+pub type StepError = String;
+type PassOutput<'filestr> = Result<Option<Lexeme<'filestr>>, StepError>;
+
+//run: cargo build; time cargo run -- shortcuts-debug -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list ./keyspace-list.sh api
+// run: cargo test
 
 #[derive(Debug)]
-pub enum HeadType {
-    Hotkey,
-    Placeholder,
-    Comment,
-    Key(usize),
-    Mod(usize),
-    ChordDelim,
-    Blank,
-    ChoiceBegin,
-    ChoiceDelim,
-    ChoiceClose,
-}
+pub enum Lexeme<'filestr> {
+    Key(&'filestr str),
+    HChoice(usize, &'filestr str),
 
-#[derive(Clone, Debug)]
-pub enum BodyType {
-    Section,
-    ChoiceBegin,
-    ChoiceDelim,
-    ChoiceClose,
+    ChordEndK(&'filestr str),
+    ChordEndHC(usize, &'filestr str),
+
+    Literal(&'filestr str),
+    BChoice(usize, &'filestr str),
 }
 
 #[derive(Debug)]
-pub struct LexemeOwner<'filestr> {
-    entries: Vec<(Range<usize>, Range<usize>)>,
-    head: Vec<WithSpan<'filestr, HeadType>>,
-    body: Vec<WithSpan<'filestr, BodyType>>,
+pub struct LexOutput<'filestr> {
+    pub lexemes: Vec<Lexeme<'filestr>>,
+    pub entry_stats: Vec<PostLexEntry>,
+    pub original: &'filestr str,
 }
 
-impl<'filestr> LexemeOwner<'filestr> {
-    fn new(capacity: (usize, usize, usize)) -> Self {
-        Self {
-            entries: Vec::with_capacity(capacity.0),
-            head: Vec::with_capacity(capacity.1),
-            body: Vec::with_capacity(capacity.2),
-        }
-    }
-
-    fn head_push_key(
-        &mut self,
-        data: &Metadata<'filestr>,
-        keyrange: Range<usize>,
-    ) -> Result<(), MarkupError> {
-        let keystr = &data.source[keyrange.start..keyrange.end];
-        if keyrange.is_empty() {
-            self.head.push(data.token(HeadType::Blank, keyrange));
-        } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
-            self.head.push(data.token(HeadType::Mod(i), keyrange));
-        } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
-            self.head.push(data.token(HeadType::Key(i), keyrange));
-        } else {
-            return Err(data.report(keyrange, errors::HEAD_INVALID_KEY));
-        }
-        Ok(())
-    }
-
-    fn push_entry(&mut self, head_cursor: &mut Cursor, body_cursor: &mut Cursor) {
-        self.entries.push((
-            head_cursor.move_to(self.head.len()),
-            body_cursor.move_to(self.body.len()),
-        ));
-    }
-
-    pub fn to_iter(&self) -> impl Iterator<Item = Lexeme> {
-        self.entries
-            .iter()
-            .map(move |(head_range, body_range)| Lexeme {
-                head: &self.head[head_range.start..head_range.end],
-                body: &self.body[body_range.start..body_range.end],
-            })
-    }
+#[derive(Debug)]
+pub struct PostLexEntry {
+    pub is_placeholder: bool,
+    pub head_size: usize,
+    pub body_size: usize,
+    pub permutations: usize,
+    pub head: usize,
+    pub body: usize,
+    pub tail: usize,
 }
 
-/****************************************************************************
- * Syntax
- ****************************************************************************/
-// @TODO: Add test for Byte-Order Mark (BOM) ?
-pub fn process(filestr: &str) -> Result<LexemeOwner, MarkupError> {
-    // Skip until first '|' or '!' at beginning of line
-    let markup = {
-        let mut walker = filestr.chars();
-        let mut prev_ch = '\n';
-        let mut index = 0;
-        loop {
-            match walker.next() {
-                Some('|') | Some('!') if prev_ch == '\n' => break,
-                Some(ch) => {
-                    prev_ch = ch;
-                    index += ch.len_utf8();
-                }
-                None => return Ok(LexemeOwner::new((0, 0, 0))),
-            }
-        }
-        &filestr[index..] // before the '|' or '!'
+pub fn lex(input: &str) -> Result<LexOutput, String> {
+    let entry_estimate = input
+        .lines()
+        .map(|line| line.chars().next().unwrap_or(' '))
+        .filter(|c| *c == '|' || *c == '!')
+        .count();
+
+    let mut fragments: Vec<Lexeme> = Vec::with_capacity(input.len());
+    let mut fsm = Fsm {
+        walker: CharsWithIndex::new(input),
+        cursor: Cursor(0),
+        original: input,
+        is_placeholder: false,
+        state: State::Head,
+        old_state: State::Head,
+
+        entry_stats: Vec::with_capacity(entry_estimate),
+        fragment_len: 0,
+        entry_head_index: 0,
+        entry_body_index: 0,
+        member_num: 0,
+        member_h_max: 0,
+        member_b_max: 0,
+        h_group_size: (0, 0),
+        b_group_size: (0, 0),
     };
 
-    // Calculate the memory needed for the Arrays
-    let capacity = {
-        let data = &mut Metadata::new(filestr, markup);
-        let state = &mut State::Initial;
-        while let Some(item) = data.next() {
-            lex_syntax(state, data, None, item)?;
+    jump_init(&mut fsm)?;
+    while let Some(ch) = fsm.walker.next() {
+        let maybe_push = match fsm.state {
+            State::Head => step_head_placeholder(&mut fsm, ch),
+            State::HBrackets => step_h_brackets(&mut fsm, ch),
+            State::Body => step_body(&mut fsm, ch),
+            State::BBrackets => step_b_brackets(&mut fsm, ch),
+            State::BEscape => step_b_escape(&mut fsm, ch),
+        }?;
+        if let Some(item) = maybe_push {
+            fragments.push(item);
         }
+        debug_assert_eq!(fragments.len(), fsm.fragment_len);
+    }
 
-        // State::Body end not processed in loop
-        (
-            data.entry_capacity + 1,
-            data.head_capacity,
-            data.body_capacity + 1,
-        )
-    };
-    //println!("{:?}", capacity);
-
-    // Lex into lexemes
-    let lexemes = {
-        let mut owner = LexemeOwner::new(capacity);
-        let (head_cursor, body_cursor) = (&mut Cursor(0), &mut Cursor(0));
-        let state = &mut State::Initial;
-        let data = &mut Metadata::new(filestr, markup);
-        while let Some(item) = data.next() {
-            lex_syntax(
-                state,
-                data,
-                Some((&mut owner, head_cursor, body_cursor)),
-                item,
-            )?;
-        }
-
-        let end = data.source.len()..data.source.len() + 1;
-        match state {
-            State::Initial | State::Placeholder => Err(data.report(end, "Not sure what error yet")),
-            State::Head => Err(data.report(end, errors::UNFINISHED_HEAD)),
-            State::HeadBrackets => Err(data.report(end, errors::UNFINISHED_BRACKETS)),
-            State::Body => {
-                let last_body = data.cursor.move_to(data.source.len());
-                owner.body.push(data.token(BodyType::Section, last_body));
-                owner.push_entry(head_cursor, body_cursor);
-                Ok(owner)
+    match fsm.state {
+        State::Body => {
+            if let Ok(Some(lexeme)) = fsm.emit_body(&input[fsm.cursor.0..]) {
+                fragments.push(lexeme)
             }
-            State::BodyLiteral => Err(data.report(end, errors::UNFINISHED_LITERAL)),
-            State::BodyBrackets => Err(data.report(end, errors::UNFINISHED_BRACKETS)),
-        }?
-    };
+            fsm.calculate_entry_size(); // @VOLATILE: After the `emit_body()`
+            Ok(())
+        }
+        State::Head if fsm.is_placeholder => Err(fsm.walker.fmt_err(END_BEFORE_PLACEHOLDER_CLOSE)),
+        State::Head => Err(fsm.walker.fmt_err(END_BEFORE_HEAD_CLOSE)),
+        State::BEscape | State::HBrackets | State::BBrackets => {
+            Err(fsm.walker.fmt_err(END_BEFORE_BRACKET_CLOSE))
+        }
+    }?;
 
-    debug_assert_eq!(lexemes.entries.len(), capacity.0);
-    debug_assert_eq!(lexemes.head.len(), capacity.1);
-    debug_assert_eq!(lexemes.body.len(), capacity.2);
-    Ok(lexemes)
+    //println!("Size {:?}", fsm.size);
+    debug_assert_eq!(fragments.len(), fsm.fragment_len);
+    //fragments.iter().for_each(|lexeme| println!("- {:?}", lexeme));
+    //for entry in &fsm.entry_stats {
+    //    let i = entry.lexeme_index;
+    //    println!("{:?}", &fragments[i.0..i.1]);
+    //    println!("{:?}", &fragments[i.1..i.2]);
+    //}
+
+    Ok(LexOutput {
+        entry_stats: fsm.entry_stats,
+        lexemes: fragments,
+        original: input,
+    })
 }
 
-// Basically one glorified match with these three variables as arguments
-define_syntax! {
-    lex_syntax | state: State
-        ! data: &mut Metadata<'a>, is_push: Option<(&mut LexemeOwner<'a>, &mut Cursor, &mut Cursor)>,
-        (lexeme: <Metadata as Iterator>::Item)
-    | -> (),
+const END_BEFORE_HEAD_CLOSE: &str = "\
+    You did not close the head. Please add a '|'. Alternatively, if you placed \
+    '|' intentionally at the start of a line, you may wish to consider the \
+    following:\n\
+    - '{|\\||}' (literals)
+    - '{{\\|}}' (you have to add to each relevant permutation), or
+    - '{{|}}' (not necessary to escape the backslash)\n\
+    depending on your use case.";
+const END_BEFORE_PLACEHOLDER_CLOSE: &str =
+    "You did not close the placehoder head. Please add a '!'.";
+const END_BEFORE_BRACKET_CLOSE: &str = "\
+    Missing a second closing curly brace to close the permutation group. \
+    Need '}}' to close. If you want a '}' as output, escape it with backslash \
+    like '\\}'.";
 
-    Initial {
-        // Do not eat charlist so that HeadType::Blank has the correct span
-        // i.e. "|  |" should trigger parser errors::EMTPY_HOTKEY
-        //      and the span should be correct
-        ('|', _, _) => {
-            *state = State::Head;
-            data.parent_state = State::Head;
-            let bar = data.cursor.move_to(data.rindex); // Skip '|'
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head.push(data.token(HeadType::Hotkey, bar));
-            }
-            data.head_capacity += 1;
-        };
-        ('!', _, _) => {
-            *state = State::Placeholder;
-            data.parent_state = State::Placeholder;
-            let exclaim = data.cursor.move_to(data.rindex); // Skip '!'
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head.push(data.token(HeadType::Placeholder, exclaim));
-            }
-            data.head_capacity += 1;
-        };
-        _ => unreachable!("Skipping before lex_syntax() is even called should stop this");
-    }
-
-    Head | Placeholder {
-        (',', i, _) => return Err(data.report(
-            i..i + ','.len_utf8(),
-            errors::HEAD_COMMA_OUTSIDE_BRACKETS
-        ));
-
-        ('\\', i, _) => return Err(data.report(
-            i..data.rindex,
-            errors::HEAD_NO_ESCAPING,
-        ));
-
-        ('\n', i, rest) if rest.starts_with("\n#") => {
-            let till_comment = data.cursor.move_to(i);
-            data.peek_while(|c| c != '\n');
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head_push_key(data, till_comment)?;
-            }
-            data.head_capacity += 1;
-        };
-
-        (ch @ '|', i, _) | (ch @ '!', i, _) => {
-            match (&state, ch) {
-                (State::Head, '|') => *state = State::Body,
-                (State::Placeholder, '!') => *state = State::Body,
-
-                // @TODO proper error message
-                // @TODO two error
-                _ => return Err(data.report(
-                    i..data.rindex,
-                    "TODO error, bar mismatch"
-                )),
-            }
-
-            let till_close = data.cursor.move_to(i);
-            data.cursor.move_to(data.rindex);
-            // No eating separator while in State::Body
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head_push_key(data, till_close)?;
-            }
-            data.head_capacity += 1;
-            //Ok((0, 1, 0))
-        };
-
-        ('{', i, _) => {
-            if let Some(('{', _, _)) = data.next() { // Second '{'
-                *state = State::HeadBrackets;
-
-                let till_bracket = data.cursor.move_to(i);
-                data.eat_charlist(&SEPARATOR);
-                let brackets = data.cursor.move_to(data.rindex);
-
-                if let Some((tokens, _, _)) = is_push {
-                    tokens.head_push_key(data, till_bracket)?;
-                    tokens.head.push(data.token(HeadType::ChoiceBegin, brackets));
-                }
-                data.head_capacity += 2;
-                //Ok((0, 2, 0))
-            } else {
-                return Err(data.report(
-                    i + '{'.len_utf8()..i + "{{".len(),
-                    errors::MISSING_LBRACKET,
-                ));
-            }
-        };
-
-        (ch, i, _) if ch == ';' || SEPARATOR.contains(&ch) => {
-            let till_punctuation = data.cursor.move_to(i);
-            data.eat_charlist(&SEPARATOR);
-            let delim = data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head_push_key(data, till_punctuation)?;
-                if ch == ';' {
-                    tokens.head.push(data.token(HeadType::ChordDelim, delim));
-                }
-            }
-            match ch {
-                ';' => data.head_capacity += 2,
-                _ => data.head_capacity += 1,
-                //';' => Ok((0, 2, 0)),
-                //_ => Ok((0, 1, 0)),
-            }
-        };
-
-
-        (_, i, _) if data.cursor.width(i) > KEYSTR_UTF8_MAX_LEN => {
-            let till_now = data.cursor.move_to(i);
-            return Err(data.report(till_now, errors::HEAD_INVALID_KEY));
-        };
-        _ => {};
-    }
-
-    HeadBrackets {
-        ('\n', i, rest) if rest.starts_with("\n#") => {
-            let till_comment = data.cursor.move_to(i);
-            data.peek_while(|c| c != '\n');
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head_push_key(data, till_comment)?;
-            }
-            data.head_capacity += 1;
-        };
-
-        ('|', i, _) => return Err(data.report(
-            i..i + '|'.len_utf8(),
-            errors::HEAD_INVALID_CLOSE,
-        ));
-
-        ('\\', i, _) => return Err(data.report(
-            i..i + '\\'.len_utf8(),
-            errors::HEAD_NO_ESCAPING,
-        ));
-        // @TODO error on '!'
-
-        ('}', i, _) => {
-            if let Some(('}', _, _)) = data.next() { // second '}'
-                *state = data.parent_state.clone();
-
-                let till_bracket = data.cursor.move_to(i);
-                data.eat_charlist(&SEPARATOR);
-                let brackets = data.cursor.move_to(data.rindex);
-
-                if let Some((tokens, _, _)) = is_push {
-                    tokens.head_push_key(data, till_bracket)?;
-                    tokens.head.push(data.token(HeadType::ChoiceClose, brackets));
-                }
-                data.head_capacity += 2;
-                //Ok((0, 2, 0))
-            } else {
-                return Err(data.report(
-                    i + '}'.len_utf8()..i + "}}".len(),
-                    errors::MISSING_RBRACKET,
-                ));
-            }
-        };
-
-        (ch, i, _) if ch == ';' || ch == ',' || SEPARATOR.contains(&ch) => {
-            let till_punctuation = data.cursor.move_to(i);
-            data.eat_charlist(&SEPARATOR);
-            let punctuation = data.cursor.move_to(data.rindex);
-            if let Some((tokens, _, _)) = is_push {
-                tokens.head_push_key(data, till_punctuation)?;
-                match ch {
-                    ';' => tokens.head.push(data.token(HeadType::ChordDelim, punctuation)),
-                    ',' => tokens.head.push(data.token(HeadType::ChoiceDelim, punctuation)),
-                    _ => {}
-                }
-            }
-            match ch {
-                ';' | ',' => data.head_capacity += 2,
-                _ => data.head_capacity += 1,
-                //';' | ',' => Ok((0, 2, 0)),
-                //_ => Ok((0, 1, 0)),
-            }
-        };
-
-        (_, i, _) if data.cursor.width(i) > KEYSTR_UTF8_MAX_LEN => {
-            let till_now = data.cursor.move_to(i);
-            return Err(data.report(till_now, errors::HEAD_INVALID_KEY));
-        };
-
-        _ => {};
-        //_ => Ok((0, 0, 0));
-    }
-
-    // @TODO make HeadType::Placeholder skip its body in lexer step
-    // No eating separator while in State::Body
-    Body {
-        ('\n', i, rest) if rest.starts_with("\n#") => {
-            let till_comment = data.cursor.move_to(i);
-            data.peek_while(|c| c != '\n');
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_comment));
-            }
-            data.body_capacity += 1;
-        };
-
-        ('\n', i, rest) if rest.starts_with("\n|") || rest.starts_with("\n!") => {
-            *state = State::Initial;
-
-            let include_newline = data.cursor.move_to(i);
-            if let Some((tokens, head_cursor, body_cursor)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, include_newline));
-                tokens.push_entry(head_cursor, body_cursor);
-            }
-            data.entry_capacity += 1;
-            data.body_capacity += 1;
-            //Ok((1, 0, 1))
-        };
-
-        (_, i, rest) if rest.starts_with("{{{") => {
-            *state = State::BodyLiteral;
-
-            let till_bracket = data.cursor.move_to(i);
-            data.next(); // Skip second '{'
-            data.next(); // Skip third '{'
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_bracket));
-            }
-            data.body_capacity += 1;
-            //Ok((0, 0, 1))
-        };
-
-        ('{', i, _) if matches!(data.peek, Some('{')) => {
-            *state = State::BodyBrackets;
-
-            let till_bracket = data.cursor.move_to(i);
-            data.next(); // Skip second '{'
-            let brackets = data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_bracket));
-                tokens.body.push(data.token(BodyType::ChoiceBegin, brackets));
-            }
-            data.body_capacity += 2;
-            //Ok((0, 0, 2))
-        };
-
-        _ => {};
-        //_ => Ok((0, 0, 0));
-    }
-
-    BodyLiteral {
-        ('\\', i, _) => {
-            let till_backslash = data.cursor.move_to(i);
-            match data.next() {
-                Some(('\n', _, _)) => {
-                    data.cursor.move_to(data.rindex);
-
-                    if let Some((tokens, _, _)) = is_push {
-                        tokens.body.push(
-                            data.token(BodyType::Section, till_backslash)
-                        );
-                    }
-                    data.body_capacity += 1;
-                    //Ok((0, 0, 1))
-                }
-                Some((ch, j, _)) => {
-                    data.cursor.move_to(data.rindex);
-
-                    if let Some((tokens, _, _)) = is_push {
-                        let escaped = j..j + ch.len_utf8();
-                        tokens.body.push(
-                            data.token(BodyType::Section, till_backslash)
-                        );
-                        tokens.body.push(
-                            data.token(BodyType::Section, escaped)
-                        );
-                    }
-                    data.body_capacity += 2;
-                    //Ok((0, 0, 2))
-                }
-                // Let the final '\\' exist by itself
-                None => {}
-                //None => Ok((0, 0, 0)),
-            }
-        };
-
-        (_, i, rest) if rest.starts_with("}}}") => {
-            *state = State::Body;
-
-            let till_bracket = data.cursor.move_to(i);
-            data.next(); // Skip second '}'
-            data.next(); // Skip third '}'
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_bracket));
-            }
-            data.body_capacity += 1;
-            //Ok((0, 0, 1))
-        };
-
-        _ => {};
-        //_ => Ok((0, 0, 0));
-    }
-
-    BodyBrackets {
-        ('\n', i, rest) if rest.starts_with("\n#") => {
-            let till_comment = data.cursor.move_to(i);
-            data.peek_while(|c| c != '\n');
-            data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_comment));
-            }
-            data.body_capacity += 1;
-        };
-
-        ('}', i, _) if matches!(data.peek, Some('}')) => {
-            *state = State::Body;
-
-            let till_bracket = data.cursor.move_to(i);
-            data.next(); // Skip second '}'
-            let brackets = data.cursor.move_to(data.rindex);
-
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_bracket));
-                tokens.body.push(data.token(BodyType::ChoiceClose, brackets));
-            }
-            data.body_capacity += 2;
-            //Ok((0, 0, 2))
-        };
-
-        ('\\', i, _) => {
-            let till_backslash = data.cursor.move_to(i);
-            match data.next() {
-                Some(('\n', _, _)) => {
-                    data.cursor.move_to(data.rindex);
-
-                    if let Some((tokens, _, _)) = is_push {
-                        tokens.body.push(data.token(BodyType::Section, till_backslash));
-                        // Do not push '\n'
-                    }
-                    data.body_capacity += 1;
-                    //Ok((0, 0, 1))
-                }
-                Some(_) => {
-                    let escaped = data.cursor.move_to(data.rindex);
-
-                    if let Some((tokens, _, _)) = is_push {
-                        tokens.body.push(data.token(BodyType::Section, till_backslash));
-                        tokens.body.push(data.token(BodyType::Section, escaped));
-                    }
-                    data.body_capacity += 2;
-                    //Ok((0, 0, 2))
-                }
-                // Let the final '\\' exist by itself
-                None => {}
-                //None => Ok((0, 0, 0)),
-            }
-        };
-
-        (',', i, _) => {
-            let till_comma = data.cursor.move_to(i);
-            let comma = data.cursor.move_to(data.rindex);
-            if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.token(BodyType::Section, till_comma));
-                tokens.body.push(data.token(BodyType::ChoiceDelim, comma));
-            }
-            data.body_capacity += 2;
-            //Ok((0, 0, 2))
-        };
-
-        //_ => Ok((0, 0, 0));
-        _ => {};
-    }
+#[derive(Debug)]
+enum State {
+    Head,
+    HBrackets,
+    Body,
+    BBrackets,
+    BEscape,
 }
 
-/****************************************************************************
- * Lexer Control-Flow Structs
- ****************************************************************************/
-
-// This owns the data that represents our token streams
-// Info specific to the 'to_push' = true branch of the lexer
-//
-struct Metadata<'filestr> {
-    parent_state: State,
-    original: &'filestr str, // File before initial skip, for error propagation
-    source: &'filestr str,   // This is a substr of 'original'
-    walker: std::str::Chars<'filestr>,
-
-    // Not using source.chars().peekable() because still want 'walker.as_str()'
-    // We need 'peek' for 'eat_charlist()' to not step too far
-    peek: Option<char>,
-    rest: &'filestr str, // source[i..] including current char
-    rindex: usize,       // source[<Self as Iterator>::Item.1..rindex] is the current char
+// Tracks all the state changes for the lexer
+#[derive(Debug)]
+struct Fsm<'a> {
+    walker: CharsWithIndex<'a>,
     cursor: Cursor,
 
-    entry_capacity: usize,
-    head_capacity: usize,
-    body_capacity: usize,
-}
-impl<'filestr> Metadata<'filestr> {
-    fn new(original: &'filestr str, source: &'filestr str) -> Self {
-        let mut walker = source.chars();
-        let peek = walker.next();
-        Self {
-            parent_state: State::Head,
-            original,
-            source,
-            walker,
-            rest: source,
-            peek,
-            rindex: 0,
-            cursor: Cursor(0),
+    original: &'a str,
+    is_placeholder: bool,
+    state: State,
+    old_state: State,
 
-            entry_capacity: 0,
-            head_capacity: 0,
-            body_capacity: 0,
+    // See second impl block for explanation of the math
+    entry_stats: Vec<PostLexEntry>,
+    fragment_len: usize,
+    entry_head_index: usize,
+    entry_body_index: usize,
+    member_num: usize,
+    member_h_max: usize,
+    member_b_max: usize,
+    h_group_size: (usize, usize), // left for in all permutations
+    b_group_size: (usize, usize), // right for only certain permutations
+}
+
+/******************************************************************************
+ * The handlers for each 'State::' of the 'Fsm'
+ ******************************************************************************/
+#[inline]
+fn jump_init<'a>(fsm: &mut Fsm<'a>) -> PassOutput<'a> {
+    while let Some(peek) = fsm.walker.peek() {
+        match (fsm.walker.curr_char, peek) {
+            ('\n', '#') => fsm.walker.eat_till_newline(),
+            ('\n', c @ '|' | c @ '!') => {
+                fsm.walker.next(); // skip newline (and '|' after break)
+
+                // These are set by default
+                //fsm.change_state(State::Head);
+                fsm.is_placeholder = c == '!';
+                debug_assert!(matches!(fsm.state, State::Head));
+                break;
+            }
+
+            ('\n', _) => {}
+            _ => {
+                return Err(fsm.walker.fmt_err(
+                    "Valid starting characters for a line are:\n\
+                    - '#' (comments),\n\
+                    - '!' (placeholders),\n\
+                    - '|' (commands)",
+                ))
+            }
+        }
+        fsm.walker.next();
+    }
+    fsm.cursor.move_to(fsm.walker.post);
+
+    Ok(None)
+}
+
+fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+    debug_assert!(!SEPARATOR.contains(&'!'));
+    debug_assert!(!SEPARATOR.contains(&'|'));
+
+    match (ch, fsm.walker.peek()) {
+        ('\n', Some('#')) => {
+            let before_newline = fsm.cursor.range_to(fsm.walker.prev);
+            fsm.walker.eat_till_newline();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_head(&fsm.original[before_newline])
+        }
+
+        ('{', Some('{')) => {
+            fsm.change_state(State::HBrackets);
+
+            let before_bracket = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.next(); // Skip second '{'
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.member_num = 0;
+            fsm.emit_head(&fsm.original[before_bracket])
+        }
+
+        (';', _) => {
+            let before_semicolon = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_h_chord(&fsm.original[before_semicolon])
+        }
+
+        _ if SEPARATOR.contains(&ch) => {
+            let before_blank = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            if let Some(';') = fsm.walker.peek() {
+                fsm.emit_h_chord(&fsm.original[before_blank])
+            } else {
+                fsm.emit_head(&fsm.original[before_blank])
+            }
+        }
+
+        /*************************************
+         * Head- and placeholder-specific code
+         *************************************/
+        ('|', _) if !fsm.is_placeholder => {
+            fsm.change_state(State::Body);
+
+            // Change to State::Body
+            let before_bar = fsm.cursor.move_to(fsm.walker.prev);
+            let lexeme = fsm.emit_h_chord(&fsm.original[before_bar]);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.mark_body_start(); // @VOLATILE: After `emit_h_chord()`
+            lexeme
+        }
+
+        ('!', _) if !fsm.is_placeholder => Err(fsm.walker.fmt_err(
+            "You are currently defining a head, not a placeholder. \
+                Did you mean to use '|' instead?",
+        )),
+        ('!', _) => {
+            fsm.change_state(State::Body);
+
+            // Change to State::Body
+            let before_exclaim = fsm.cursor.move_to(fsm.walker.prev);
+            let lexeme = fsm.emit_h_chord(&fsm.original[before_exclaim]);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.mark_body_start(); // @VOLATILE: after `emit_p_chord()`
+            lexeme
+        }
+        ('|', _) => Err(fsm.walker.fmt_err(
+            "You are currently defining a placeholder, not a head. \
+                Did you mean to use '!' instead?",
+        )),
+
+        /**********************************/
+        ('{', _) => Err(fsm.walker.fmt_err(
+            "Missing a second opening curly brace. \
+            Need '{{' to start an enumeration",
+        )),
+
+        _ => Ok(None),
+    }
+}
+
+#[inline]
+fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+    match (ch, fsm.walker.peek()) {
+        ('\n', Some('#')) => {
+            let before_newline = fsm.cursor.range_to(fsm.walker.prev);
+            fsm.walker.eat_till_newline();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_h_choice(&fsm.original[before_newline])
+        }
+        ('|', _) => Err(fsm
+            .walker
+            .fmt_err("Unexpected bar '|'. Close the enumeration first with '}}'")),
+        ('\\', _) => Err(fsm.walker.fmt_err(
+            "You cannot escape characters with backslash '\\' \
+                in the hotkey definition portion",
+        )),
+        (',', _) => {
+            let before_comma = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post); // After ','
+            let lexeme = fsm.emit_h_choice(&fsm.original[before_comma]);
+            fsm.member_num += 1; // @VOLATILE: After `emit_h_choice()`
+            lexeme
+        }
+        ('}', Some('}')) => {
+            fsm.revert_state();
+
+            let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
+            fsm.walker.next(); // Skip second '}'
+            fsm.walker.eat_separator();
+            fsm.member_h_max = fsm.member_h_max.max(fsm.member_num + 1);
+            fsm.cursor.move_to(fsm.walker.post); // After second '}'
+            fsm.emit_h_choice(&fsm.original[before_bracket])
+        }
+
+        (';', _) => {
+            let before_semicolon = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_hc_chord(&fsm.original[before_semicolon])
+        }
+        // @VOLATILE: This should be the last of the non-errors
+        //            in case one of the our symbols is in SEPARATOR
+        _ if SEPARATOR.contains(&ch) => {
+            let before_blank = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_separator();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_h_choice(&fsm.original[before_blank])
+        }
+
+        ('}', _) => Err(fsm.walker.fmt_err(
+            "Missing a second closing curly brace. \
+            Need '}}' to close an enumeration",
+        )),
+        _ => Ok(None),
+    }
+}
+#[inline]
+fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+    match (ch, fsm.walker.peek()) {
+        // Note: Single '{' is not an error, thus doing a different match
+        ('\n', Some('#')) => {
+            let before_newline = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.eat_till_newline();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_body(&fsm.original[before_newline])
+        }
+
+        ('{', Some('{')) => {
+            fsm.change_state(State::BBrackets);
+
+            let before_brackets = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.walker.next(); // Skip second '{'
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.member_num = 0;
+            fsm.emit_body(&fsm.original[before_brackets])
+        }
+
+        ('\n', Some(c @ '|') | Some(c @ '!')) => {
+            fsm.change_state(State::Head);
+            fsm.is_placeholder = c == '!';
+
+            // Final newlines will be trimmed at parser stage anyway
+            let before_newline = fsm.cursor.move_to(fsm.walker.prev);
+            let lexeme = fsm.emit_body(&fsm.original[before_newline]);
+            fsm.walker.next(); // Skip '|' or '!'
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.calculate_entry_size(); // @VOLATILE: After `emit_body()`
+            lexeme
+        }
+
+        _ => Ok(None),
+    }
+}
+
+#[inline]
+fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+    match (ch, fsm.walker.peek()) {
+        ('\n', Some('#')) => {
+            let before_newline = fsm.cursor.move_to(fsm.walker.post);
+            fsm.walker.eat_till_newline();
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_b_choice(&fsm.original[before_newline])
+        }
+
+        ('\\', _) => {
+            let before_backslash = fsm.cursor.move_to(fsm.walker.prev);
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.change_state(State::BEscape);
+            fsm.emit_b_choice(&fsm.original[before_backslash])
+        }
+
+        ('|', _) if fsm.walker.last_char == '\n' => Err(fsm.walker.fmt_err(
+            "A '|' here conflicts with starting a new entry. \
+            Close the enumeration first with '}}'.\n\
+            If you want a '|' as the first character in line try:\n\
+            - '\\n|' on the previous line or\n\
+            - '\\|' escaping it on this line.",
+        )),
+        (',', _) => {
+            let before_comma = fsm.cursor.range_to(fsm.walker.prev);
+            let frag = fsm.emit_b_member(&fsm.original[before_comma]);
+            fsm.cursor.move_to(fsm.walker.post); // After ','
+            fsm.member_num += 1; // @VOLATILE: ensure this is after emit
+            frag
+        }
+        ('}', Some('}')) => {
+            let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
+            fsm.walker.next(); // Skip the second '}'
+            fsm.change_state(State::Body);
+            fsm.member_b_max = fsm.member_b_max.max(fsm.member_num + 1);
+            fsm.cursor.move_to(fsm.walker.post); // After '}'
+            fsm.emit_b_member(&fsm.original[before_bracket])
+        }
+        _ => Ok(None),
+    }
+}
+
+#[inline]
+fn step_b_escape<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+    fsm.revert_state();
+    match ch {
+        // Emit the next character
+        '\\' | '|' | ',' => {
+            let after_escaped = fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_b_choice(&fsm.original[after_escaped])
+        }
+
+        // Emit a newline that does not exist in fsm.original
+        'n' => {
+            fsm.cursor.move_to(fsm.walker.post);
+            fsm.emit_b_choice(NEWLINE)
+        }
+
+        // Skip newlines
+        '\n' => {
+            fsm.cursor.move_to(fsm.walker.post);
+            Ok(None)
+        }
+        _ => Err(fsm.walker.fmt_err(
+            "This character is not eligible for escaping. \
+            You might need to escape a previous '\\'.",
+        )),
+    }
+}
+
+impl<'a> Fsm<'a> {
+    #[inline]
+    fn change_state(&mut self, target_state: State) {
+        #[cfg(debug_assertions)]
+        match (&self.state, &target_state) {
+            (State::Head, State::Body | State::HBrackets) => {}
+            (State::Body | State::HBrackets, State::Head) => {}
+            (State::Body, State::BBrackets) => {}
+            (State::BBrackets, State::Body) => {}
+
+            (State::BBrackets, State::BEscape) => {}
+            (State::BEscape, State::BBrackets) => {}
+            (a, b) => unreachable!(
+                "\n{}",
+                self.walker
+                    .fmt_err(format!("Invalid state transition {:?} -> {:?}", a, b).as_str())
+            ),
+        }
+        self.old_state = replace(&mut self.state, target_state);
+    }
+
+    #[inline]
+    fn revert_state(&mut self) {
+        swap(&mut self.state, &mut self.old_state);
+    }
+}
+
+/******************************************************************************
+ * Math for the Finite State Machine ('Fsm')
+ ******************************************************************************/
+// All the size calculations for pre-allocating the 'Vec' for the parser
+// Although they are all only called once or twice, these consolidate the math
+//
+// There are three calculations:
+// 1. The number of brackets groups '{{' '}}' ('member_h_max', 'member_b_max')
+//    This is measuring the fattest bracket group
+// 2. The count for size required by the parser ('h_group_size', 'b_group_size')
+//    For head, this measures conservatively along chord boundaries
+//    For body, we can get exact measures
+// 3. Member num (the index of the variant of the permutation) is handled
+//    in each 'step_()' function
+macro_rules! define_emitter {
+    ($($fn:ident ($self:ident, $frag:ident ) $expr:expr )*) => {
+        $(
+            #[inline]
+            fn $fn(&mut $self, $frag: &'a str) -> PassOutput<'a> {
+                if $frag.is_empty() {
+                    Ok(None)
+                } else {
+                    $self.fragment_len += 1;
+                    $expr
+                }
+            }
+        )*
+    };
+}
+impl<'a> Fsm<'a> {
+    define_emitter! {
+        // Outside of head/placeholder '{{' and '}}'
+        emit_head(self, frag) Ok(Some(Lexeme::Key(frag)))
+        // Inside of '{{' and '}}'
+        emit_h_choice(self, frag) Ok(Some(Lexeme::HChoice(self.member_num, frag)))
+
+        // Before closing '!', closing '|', and ';'
+        emit_h_chord(self, frag) {
+            self.h_group_size.0 += 1;
+            Ok(Some(Lexeme::ChordEndK(frag)))
+        }
+        emit_hc_chord(self, frag) {
+            self.h_group_size.1 += 1;
+            Ok(Some(Lexeme::ChordEndHC(self.member_num, frag)))
+        }
+
+        // Outside of body '{{' and '}}'
+        emit_body(self, frag) {
+            self.b_group_size.0 += 1;
+            Ok(Some(Lexeme::Literal(frag)))
+        }
+        // Inside of body '{{' and '}}', when not before ','
+        emit_b_choice(self, frag) {
+            self.b_group_size.1 += 1;
+            Ok(Some(Lexeme::BChoice(self.member_num, frag)))
+        }
+    }
+    // Inside of body '{{' and '}}', when before ','
+    #[inline]
+    fn emit_b_member(&mut self, frag: &'a str) -> PassOutput<'a> {
+        if self.member_num > self.member_h_max {
+            Err(self.walker.fmt_err(
+                "The number of body permutations cannot exceed the number \
+                of head permutations.\n\
+                Either delete the highlighted body portion or add more \
+                options for the head.\n\
+                If you want a comma as a text, you escape like '\\,'.",
+            ))
+        } else {
+            self.emit_b_choice(frag)
         }
     }
 
-    fn peek_while<F: Fn(char) -> bool>(&mut self, sentinel: F) -> Option<<Self as Iterator>::Item> {
-        let mut current = None;
-        while let Some(ch) = self.peek {
-            if sentinel(ch) {
-                current = self.next();
+    #[inline]
+    fn mark_body_start(&mut self) {
+        self.entry_body_index = self.fragment_len;
+    }
+
+    #[inline]
+    fn calculate_entry_size(&mut self) {
+        //print!("{:?} {} ", self.h_group_size, self.member_h_max);
+        //print!("{:?} {} ", self.b_group_size, self.member_b_max);
+        let s = (
+            self.h_group_size.0 * self.member_h_max + self.h_group_size.1,
+            self.b_group_size.0 * self.member_b_max + self.b_group_size.1,
+        );
+
+        // Only possibly equal after push for the last entry
+        debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
+        debug_assert!(self.member_h_max >= self.member_b_max);
+        self.entry_stats.push(PostLexEntry {
+            is_placeholder: self.is_placeholder,
+            head_size: s.0,
+            body_size: s.1,
+
+            // Head determines the number of permutations because we always
+            // have more head permutations than body
+            permutations: self.member_h_max,
+            head: self.entry_head_index,
+            body: self.entry_body_index,
+            tail: self.fragment_len,
+        });
+
+        self.entry_head_index = self.fragment_len;
+        self.member_h_max = 1;
+        self.member_b_max = 1;
+        self.h_group_size = (0, 0);
+        self.b_group_size = (0, 0);
+    }
+}
+
+#[derive(Debug)]
+struct Cursor(usize);
+impl Cursor {
+    #[inline]
+    fn move_to(&mut self, till: usize) -> Range {
+        let range = self.range_to(till);
+        self.0 = till;
+        range
+    }
+
+    #[inline]
+    fn range_to(&self, till: usize) -> Range {
+        self.0..till
+    }
+}
+
+/******************************************************************************
+ * A 'std::str::Chars' wrapper for use in 'first_pass()'
+ ******************************************************************************/
+#[derive(Debug)]
+struct CharsWithIndex<'a> {
+    pub(self) iter: std::str::Chars<'a>,
+    orig: &'a str,
+
+    // These will be equal at the boundaries
+    // And they always be on apart, 'prev' having the same index as 'iter'
+    prev: usize, // the left border of the current character
+    post: usize, // the right border of the current character
+    row: usize,
+    col: usize,
+
+    last_char: char,
+    pub(self) curr_char: char,
+    peek_char: Option<char>,
+}
+impl<'a> CharsWithIndex<'a> {
+    fn new(text: &'a str) -> Self {
+        let last_char = ' ';
+        let curr_char = '\n';
+        debug_assert!(last_char != '\n'); // So 'self.row' starts at 1
+                                          // So 'self.last_char' set to '\n' at first call of `self.next()`
+        debug_assert!(curr_char == '\n');
+        let mut iter = text.chars();
+        let peek_char = iter.next();
+
+        Self {
+            iter,
+            orig: text,
+            prev: 0, // equal to 'post' at the beginning
+            post: 0,
+            row: 0,
+            col: 0,
+
+            last_char,
+            curr_char,
+            peek_char,
+        }
+    }
+
+    #[inline]
+    fn peek(&self) -> Option<char> {
+        self.peek_char
+    }
+
+    fn eat_till_newline(&mut self) {
+        while let Some(c) = self.peek() {
+            if c == '\n' {
+                break;
+            } else {
+                self.next();
+            }
+        }
+    }
+
+    fn eat_separator(&mut self) {
+        while let Some(peek) = self.peek() {
+            if SEPARATOR.contains(&peek) {
+                self.next();
             } else {
                 break;
             }
         }
-        return current;
     }
 
-    fn eat_charlist(&mut self, list: &[char]) {
-        self.peek_while(|c| list.contains(&c));
-    }
-
-    fn token<T>(&self, token: T, range: Range<usize>) -> WithSpan<'filestr, T> {
-        let offset = self.original.len() - self.source.len();
-        WithSpan {
-            data: token,
-            context: self.original,
-            range: offset + range.start..offset + range.end,
-        }
-    }
-
-    fn report(&self, span: Range<usize>, message: &str) -> MarkupError {
-        let offset = self.source.as_ptr() as usize - self.original.as_ptr() as usize;
-        // 'self.source' is a substr of 'self.original'
-        MarkupError::from_range(
-            &self.original,
-            offset + span.start..offset + span.end,
-            message.to_string(),
+    fn fmt_err(&self, msg: &str) -> String {
+        debug_assert!(self.row >= 1);
+        let row_string = self.row.to_string();
+        let line = self.orig.lines().nth(self.row - 1).unwrap_or("");
+        let spaces = " ".repeat(row_string.len());
+        let term_width = line.chars().take(self.col).map(|_| 1);
+        let arrows = "^".repeat(term_width.sum());
+        format!(
+            "    {} | {}\n    {}   {}\n{}",
+            row_string, line, spaces, arrows, msg
         )
+    }
+    //fn fmt_span_err(&self, msg: &str) -> Result<(), String> {
+    //    debug_assert!(self.row >= 1);
+    //    Err("".into())
+    //}
+}
+
+//
+impl<'a> Iterator for CharsWithIndex<'a> {
+    type Item = char;
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        let cur = self.peek_char;
+        self.peek_char = self.iter.next();
+
+        if let Some(c) = cur {
+            // This is sound in the first '.next()' case
+            // (prev, post) => (0, 0).next() -> (0, 1)
+            self.prev = self.post;
+            self.post += c.len_utf8();
+
+            self.last_char = self.curr_char;
+            self.curr_char = c;
+
+            self.col += 1;
+            if self.last_char == '\n' {
+                self.row += 1;
+                self.col = 1;
+            }
+
+            Some(c)
+        } else {
+            self.prev = self.post; // Equal when we reach the end
+            None
+        }
     }
 }
 
-impl<'filestr> Iterator for Metadata<'filestr> {
-    type Item = (char, usize, &'filestr str);
-    fn next(&mut self) -> Option<Self::Item> {
-        let item = (self.peek?, self.rindex, self.rest);
-        let len_utf8 = item.0.len_utf8();
-        self.rest = self.walker.as_str();
-        self.rindex += len_utf8;
-        self.peek = self.walker.next();
-        Some(item)
+#[test]
+fn chars_with_index() {
+    macro_rules! assert_peek_next {
+        ($iter:ident, $ev:expr) => {
+            assert_eq!($iter.peek, $ev);
+            assert_eq!($iter.peek, $ev);
+            assert_eq!($iter.next(), $ev);
+        };
     }
+    let mut iter = CharsWithIndex::new("a");
+    assert_peek_next!(iter, Some('a'));
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+
+    let mut iter = CharsWithIndex::new("");
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+
+    let mut iter = CharsWithIndex::new("你m好!!我是y只mao");
+    assert_peek_next!(iter, Some('你'));
+    assert_peek_next!(iter, Some('m'));
+    assert_peek_next!(iter, Some('好'));
+    assert_peek_next!(iter, Some('!'));
+    assert_peek_next!(iter, Some('!'));
+    assert_peek_next!(iter, Some('我'));
+    assert_peek_next!(iter, Some('是'));
+    assert_peek_next!(iter, Some('y'));
+    assert_peek_next!(iter, Some('只'));
+    assert_peek_next!(iter, Some('m'));
+    assert_peek_next!(iter, Some('a'));
+    assert_peek_next!(iter, Some('o'));
+    assert_peek_next!(iter, None);
+    assert_peek_next!(iter, None);
+
+    let source = "你m好!!我是y只mao";
+    let mut iter = CharsWithIndex::new(source);
+    while let Some(c) = iter.next() {
+        assert_eq!(&c.to_string(), &source[iter.prev..iter.post]);
+    }
+
+    // TODO: test peek and eat_whitespace
+    //let mut iter = CharsWithIndex::new("你m好!!我");
 }

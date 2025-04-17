@@ -4,18 +4,19 @@
 #![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
 #![allow(clippy::mem_discriminant_non_enum)]
+#![feature(or_patterns)]
 
 mod constants;
-mod deserialise;
+//mod deserialise;
 mod errors;
-mod keyspace;
+//mod keyspace;
 mod lexer;
 mod macros;
-mod parser;
-mod reporter;
-mod structs;
+//mod parser;
+//mod reporter;
+//mod structs;
 
-use deserialise::Print;
+//use deserialise::Print;
 use std::fs;
 use std::io::{self, Write};
 
@@ -25,7 +26,8 @@ fn main() {
         Ok(()) => std::process::exit(0),
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
-        Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
+        Err(Errors::Debug(err)) => eprintln!("{}", err),
+        //Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
     }
     std::process::exit(1);
 }
@@ -37,7 +39,8 @@ Hello
 enum Errors {
     Cli(getopts::Fail),
     Io(io::Error),
-    Parse(reporter::MarkupError),
+    Debug(String),
+    //Parse(reporter::MarkupError),
 }
 
 
@@ -64,8 +67,11 @@ macro_rules! subcommands {
         let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
             .map_err(Errors::Cli)?;
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
-        let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+        let _lex_data = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
+        //let _parser = parser::parse(_lex_data);
+        _lex_data.lexemes.iter().for_each(|lexeme| println!("- {:?}", lexeme));
+        //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+        //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
     };
 
     (@keyspaces
@@ -74,10 +80,12 @@ macro_rules! subcommands {
     ) => {
         let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
             .map_err(Errors::Cli)?;
-        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
-        let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
-        let $keyspaces = keyspace::process(&$shortcuts);
+        let _file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
+        //let (_lexemes, _parse_size) = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
+        //lexemes.iter().for_each(|lexeme| println!("- {:?}", lexeme));
+        //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+        //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+        //let $keyspaces = keyspace::process(&$shortcuts);
     };
 }
 
@@ -98,27 +106,27 @@ fn parse_args(args: &[String]) -> Result<(), Errors> {
     subcommands!(args | pargs shortcuts keyspaces
         match (pargs.free.get(0).map(String::as_str)) {
             "i3" @keyspaces (true, true) => {
-                let script_pathstr = pargs.opt_str("s").unwrap();
-                let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
-                let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
-                script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
+                //let script_pathstr = pargs.opt_str("s").unwrap();
+                //let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
+                //let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
+                //script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
 
-                let i3_config = deserialise::I3Shell(&keyspaces);
-                let mut buffer = String::with_capacity(i3_config.string_len());
-                i3_config.push_string_into(&mut buffer);
-                println!("{}", buffer);
+                //let i3_config = deserialise::I3Shell(&keyspaces);
+                //let mut buffer = String::with_capacity(i3_config.string_len());
+                //i3_config.push_string_into(&mut buffer);
+                //println!("{}", buffer);
             }
             "shortcuts" @shortcuts (true, false) => {
-                println!("{}", deserialise::ListPreview(&shortcuts).to_string_custom());
+                //println!("{}", deserialise::ListPreview(&shortcuts).to_string_custom());
             }
             "shortcuts-debug" @shortcuts (true, false) => {
-                println!("{}", deserialise::ListDebug(&shortcuts).to_string_custom());
+                //println!("{}", deserialise::ListDebug(&shortcuts).to_string_custom());
             }
             "keyspaces" @keyspaces (true, false) => {
-                println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+                //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
             }
             "sh" @shortcuts (true, false) => {
-                println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
+                //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
             }
 
         }
