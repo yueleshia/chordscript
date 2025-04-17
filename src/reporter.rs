@@ -19,7 +19,7 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
-use std::{cmp, error, io, fmt, mem};
+use std::{cmp, error, fmt, io, mem};
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
@@ -33,7 +33,6 @@ const ELLIPSIS: &str =  " ...";
 fn limit_is_big_enough() {
     assert!(DISPLAY_LIMIT >= ELLIPSIS.len())
 }
-
 
 #[derive(Debug)]
 pub enum CliError {
@@ -79,7 +78,7 @@ impl error::Error for MarkupError {}
 impl MarkupError {
     pub fn new<'a>(source: &'a str, span: &'a str, message: String) -> Self {
         let index = index_of_substr(source, span);
-        if span.len() == 0 {
+        if span.is_empty() {
             panic!("Errors on the");
         }
         Self {
@@ -122,11 +121,7 @@ impl fmt::Display for MarkupError {
         let (c1_digit_len, c2_digit_len) = (count_digits(c1), count_digits(c2));
 
         let is_single_line = r1 == r2;
-        let middle_row_count = if is_single_line {
-            0
-        } else {
-            r2 - r1 - 1
-        };
+        let middle_row_count = if is_single_line { 0 } else { r2 - r1 - 1 };
 
         let begin_line = self.source.lines().nth(r1).unwrap();
         let close_line = self.source.lines().nth(r2).unwrap();
@@ -135,9 +130,15 @@ impl fmt::Display for MarkupError {
             let span_begin = self.range.0 - begin_line_index;
             let spaces_width = begin_line[0..span_begin].width_cjk();
             if is_single_line {
-                (spaces_width, self.source[self.range.0..self.range.1].width_cjk())
+                (
+                    spaces_width,
+                    self.source[self.range.0..self.range.1].width_cjk(),
+                )
             } else {
-                (spaces_width, begin_line.width_cjk() - spaces_width + '\n'.len_utf8())
+                (
+                    spaces_width,
+                    begin_line.width_cjk() - spaces_width + '\n'.len_utf8(),
+                )
             }
         };
         let close_span_width = if is_single_line {
@@ -146,7 +147,6 @@ impl fmt::Display for MarkupError {
             let span_close = self.range.1 - index_of_substr(&self.source, close_line);
             cmp::min(close_line[0..span_close].width_cjk(), DISPLAY_LIMIT)
         };
-
 
         let mut buffer: String;
         precalculate_capacity_and_build!(buffer, {
@@ -209,17 +209,8 @@ impl fmt::Display for MarkupError {
             // Print close source with row numbers
             row_digit_len => push_num(&mut buffer, row_digit_len, r2);
             3 => buffer.push_str(" | ");
-            {
-                if is_single_line {
-                    0
-                } else {
-                    close_line.len()
-                }
-            } => {
-                if !is_single_line {
-                    buffer.push_str(close_line);
-                }
-            };
+            if is_single_line { 0 } else { close_line.len() }
+                => if !is_single_line { buffer.push_str(close_line); };
             1 => buffer.push('\n');
 
             // Error marker for close line
@@ -261,7 +252,6 @@ fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
     (substr.as_ptr() as usize) - (source.as_ptr() as usize)
 }
 
-
 // If I do include this, need to deal with error markers are trimmed substrings
 //fn trim_to_limit(line: &str, is_reverse: bool) -> (&str, &str) {
 //    let len = line.width_cjk();
@@ -299,7 +289,8 @@ fn push_num(buffer: &mut String, digit_len: usize, mut num: usize) {
         unsafe { mem::MaybeUninit::uninit().assume_init() };
     let mut curr = temp.len();
     let base = 10;
-    loop { // do-while num != 0
+    loop {
+        // do-while num != 0
         let remainder: u8 = (num % base) as u8;
         num /= base;
         curr -= 1;
@@ -323,7 +314,7 @@ fn count_digits(mut num: usize) -> usize {
             break;
         }
     }
-    return size;
+    size
 }
 
 fn pad(buffer: &mut String, len: usize, to_pad: &str) {

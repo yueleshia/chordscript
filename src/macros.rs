@@ -72,7 +72,6 @@ macro_rules! const_concat {
     };
 }
 
-
 #[test]
 fn const_concat() {
     // Test loop unrolling is working
@@ -88,5 +87,4 @@ fn const_concat() {
     const FIRST: &'static str = "The quick brown fox jumps over";
     const_concat!(const ASDF = FIRST => " the lazy dog");
     assert_eq!("The quick brown fox jumps over the lazy dog", ASDF);
-
 }

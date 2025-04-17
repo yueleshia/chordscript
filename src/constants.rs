@@ -16,7 +16,7 @@ pub const SEPARATOR: [char; SEPARATOR_LEN] = {
     let base = [' '; SEPARATOR_LEN];
     let mut base = map!(
         base: [char; SEPARATOR_LEN]
-        |> i in 0..WHITESPACE.len() => { base[i] = WHITESPACE[i] }
+        |> i in 0..WHITESPACE.len() => base[i] = WHITESPACE[i]
     );
     // Add these
     base[25] = '+';
@@ -54,18 +54,16 @@ pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;
     let max_len = map!(
         max_len: usize
-        |> i in 0..KEYCODES.len() => {
-            if KEYCODES[i].len() > max_len {
-                max_len = KEYCODES[i].len()
-            }
+        |> i in 0..KEYCODES.len()
+        => if KEYCODES[i].len() > max_len {
+            max_len = KEYCODES[i].len()
         }
     );
     map!(
         max_len: usize
-        |> i in 0..MODIFIERS.len() => {
-            if MODIFIERS[i].len() > max_len {
-                max_len = MODIFIERS[i].len()
-            }
+        |> i in 0..MODIFIERS.len()
+        => if MODIFIERS[i].len() > max_len {
+            max_len = MODIFIERS[i].len()
         }
     )
 };
@@ -96,10 +94,12 @@ mod test {
     fn keycodes_is_sorted() {
         // Check if KEYCODES is sorted
         let mut sorted = KEYCODES.clone();
-        sorted.sort_by(|a, b| if a.len() == b.len() {
-            a.cmp(b)
-        } else {
-            a.len().cmp(&b.len())
+        sorted.sort_by(|a, b| {
+            if a.len() == b.len() {
+                a.cmp(b)
+            } else {
+                a.len().cmp(&b.len())
+            }
         });
         assert_eq!(KEYCODES, sorted);
     }

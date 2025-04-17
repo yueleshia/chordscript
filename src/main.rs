@@ -1,6 +1,8 @@
 //run: cargo test -- --nocapture
 
 #![allow(dead_code)]
+#![allow(clippy::string_lit_as_bytes)]
+
 mod constants;
 mod errors;
 mod lexer;
@@ -17,10 +19,11 @@ fn interpret() {
     #
 #hello
 |super {{, alt, ctrl, ctrl alt}} Return|
-  {{$TERMINAL, alacritty, st, sakura}} -e tmux.sh open
+  {{$TERMINAL, alacritty, \\
+  st, sakura}} -e tmux.sh open
 |super {{c, t,g, k, v}} ; super {{b,s}}|
   $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
-
+{{{| cat -}}}
 |super shift q|"#;
     //println!("{}", _file);
 
@@ -31,5 +34,7 @@ fn interpret() {
     //for (i, x) in _lexemes.heads.iter().enumerate() {
     //    println!("{}: {:?}", i, x);
     //}
-    //println!("{:#?}", tokens.bodys);
+    for (i, x) in _lexemes.bodys.iter().enumerate() {
+        println!("{}: {:?}", i, x);
+    }
 }
