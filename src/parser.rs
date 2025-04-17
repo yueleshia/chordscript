@@ -365,11 +365,11 @@ impl<'filestr> ShortcutOwner<'filestr> {
             let last = &head.last().unwrap().range;
             let range = if head_begin == self.chords.len() {
                 const BAR: usize = "|".len(); // Include bars around head
-                (head[0].range.start - BAR, last.end + BAR)
+                head[0].range.start - BAR..last.end + BAR
             } else {
                 let len = head.len();
                 let (index, _) = find_prev_from!(head, len, HeadType::ChordDelim);
-                (head[index].range.start, last.end)
+                head[index].range.start..last.end
             };
             return Err(MarkupError::from_range(
                 head[0].context,

@@ -21,7 +21,7 @@
 
 use crate::precalculate_capacity_and_build;
 use crate::structs::{Print, WithSpan};
-use std::{error, fmt, io, mem};
+use std::{error, fmt, io, mem, ops::Range};
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
@@ -55,14 +55,14 @@ impl error::Error for CliError {}
 #[derive(Debug)]
 pub struct MarkupError {
     source: String,
-    range: (usize, usize),
+    range: Range<usize>,
     message: String,
 }
 
 impl error::Error for MarkupError {}
 
 impl MarkupError {
-    pub fn from_range(source: &str, range: (usize, usize), message: String) -> Self {
+    pub fn from_range(source: &str, range: Range<usize>, message: String) -> Self {
         Self {
             source: source.to_string(),
             range,
@@ -73,7 +73,7 @@ impl MarkupError {
         let index = index_of_substr(context, span);
         Self {
             source: context.to_string(),
-            range: (index, index + span.len()),
+            range: index..index + span.len(),
             message,
         }
     }
@@ -91,8 +91,13 @@ impl MarkupError {
     }
 }
 
-fn convert_to_row_indices(source: &str, range: (usize, usize)) -> (usize, usize, usize, usize) {
-    let (begin, close) = range;
+fn convert_to_row_indices(
+    source: &str,
+    Range {
+        start: begin,
+        end: close,
+    }: Range<usize>,
+) -> (usize, usize, usize, usize) {
     assert!(begin <= close, "Range is out of order");
 
     let (_, r0, c0, r1, c1) = source.lines().take(source.lines().count() - 1).fold(
@@ -155,8 +160,8 @@ impl fmt::Display for MarkupError {
 
 impl Print for MarkupError {
     precalculate_capacity_and_build!(self, buffer {
-        let (begin, close) = self.range;
-        let (r0, _, r1, _) = convert_to_row_indices(self.source.as_str(), self.range);
+        let Range { start: begin, end: close } = self.range;
+        let (r0, _, r1, _) = convert_to_row_indices(self.source.as_str(), begin..close);
         let row_digit_len = count_digits(r1 + 1);
 
         let is_single_line = r0 == r1;

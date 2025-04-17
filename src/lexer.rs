@@ -547,7 +547,7 @@ impl<'filestr> Metadata<'filestr> {
         // 'self.source' is a substr of 'self.original'
         MarkupError::from_range(
             &self.original,
-            (offset + span.start, offset + span.end),
+            offset + span.start..offset + span.end,
             message.to_string(),
         )
     }

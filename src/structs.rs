@@ -36,10 +36,10 @@ impl<'filestr, T> WithSpan<'filestr, T> {
         }
     }
 
-    pub fn span_to_as_range(&self, to: &Self) -> (usize, usize) {
+    pub fn span_to_as_range(&self, to: &Self) -> Range<usize> {
         // This an internal structure so debug_assert is fine
         debug_assert_eq!(self.context, to.context);
-        (self.range.start, to.range.end)
+        self.range.start..to.range.end
     }
 }
 
