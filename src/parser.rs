@@ -25,21 +25,35 @@ type ShortcutView<'owner, 'filestr> = Vec<Shortcut<'owner, 'filestr>>;
 // Choose this API to meaningfully separate a sorted and original-order view
 // Also keeps the fields in 'ShortcutOwner' private
 impl<'filestr> ShortcutOwner<'filestr> {
-    // Renders the shortcuts from 'Range<usize>' into 'Hotkey'
-    pub fn make_owned_view<'owner>(&'owner self) -> Vec<Shortcut<'owner, 'filestr>> {
-        let mut shortcuts = Vec::with_capacity(self.shortcuts.len());
-        shortcuts.extend(self.shortcuts.iter().map(|(head, body)| Shortcut {
-            hotkey: &self.chords[head.start..head.end],
-            command: &self.scripts[body.start..body.end],
-        }));
-        shortcuts
-    }
-
     pub fn make_owned_sorted_view<'owner>(&'owner self) -> ShortcutView<'owner, 'filestr> {
-        let mut view = self.make_owned_view();
+        let mut view = Vec::with_capacity(self.shortcuts.len());
+        view.extend(self.to_iter());
+
         // Prefer stable sort to keep ordering for duplicate line errors
         view.sort_by(|a, b| a.hotkey.cmp(b.hotkey));
         view
+    }
+
+    pub fn to_iter<'owner>(&'owner self) -> ShortcutIter<'owner, 'filestr> {
+        ShortcutIter {
+            iter: self.shortcuts.iter(),
+            owner: self,
+        }
+    }
+}
+
+pub struct ShortcutIter<'owner, 'filestr> {
+    iter: std::slice::Iter<'owner, (Range<usize>, Range<usize>)>,
+    owner: &'owner ShortcutOwner<'filestr>,
+}
+
+impl<'owner, 'filestr>  Iterator for ShortcutIter<'owner, 'filestr> {
+    type Item = Shortcut<'owner, 'filestr>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(head, body)| Shortcut {
+            hotkey: &self.owner.chords[head.start..head.end],
+            command: &self.owner.scripts[body.start..body.end],
+        })
     }
 }
 
@@ -553,7 +567,7 @@ impl Permutations {
     }
 }
 
-//#[test]
+#[test]
 fn permutation_generator() {
     let mut gen = Permutations::new(5);
     gen.push_digit_weight(1, 0);

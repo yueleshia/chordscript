@@ -19,11 +19,13 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
-use crate::precalculate_capacity_and_build;
-use crate::structs::{Print, WithSpan};
 use std::{error, fmt, io, mem, ops::Range};
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
+
+use crate::precalculate_capacity_and_build;
+use crate::deserialise::Print;
+use crate::structs::WithSpan;
 
 // (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
 // 0.302 is an overestimate of log(10)/log(2) to err on side of bigger

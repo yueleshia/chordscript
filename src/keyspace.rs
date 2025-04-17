@@ -6,29 +6,76 @@ use std::mem;
 use std::ops::Range;
 
 use crate::parser::ShortcutOwner;
-use crate::structs::{Chord, Cursor, Print, Shortcut, WithSpan};
+use crate::structs::{Chord, Cursor, Hotkey, Shortcut, WithSpan};
 
 /****************************************************************************
  * Token definitions
  ****************************************************************************/
+// @TODO consider removing 'parsemes lifetime, i.e. copy the chord list
 #[derive(Debug)]
-pub struct Keyspace<'parsemes, 'filestr> {
-    title: &'parsemes [WithSpan<'filestr, Chord>],
+struct KeyspaceRef<'parsemes, 'filestr> {
+    title: Hotkey<'parsemes, 'filestr>,
     actions: Range<usize>,
 }
 
 #[derive(Debug)]
 pub enum Action<'parsemes, 'filestr> {
-    SetState(&'parsemes [WithSpan<'filestr, Chord>]),
+    SetState(Hotkey<'parsemes, 'filestr>),
     Command(
         WithSpan<'filestr, Chord>,
         &'parsemes [WithSpan<'filestr, ()>],
     ),
 }
 
+impl<'parsemes, 'filestr> Action<'parsemes, 'filestr> {
+    pub fn key_trigger(&self) -> &WithSpan<'filestr, Chord> {
+        match self {
+            // Should always be at least one chord in title
+            // There is no Action::SetState(&[])
+            Action::SetState(title) => title.last().unwrap(),
+            Action::Command(trigger, _) => trigger,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct KeyspaceOwner<'parsemes, 'filestr> {
-    keyspaces: Vec<Keyspace<'parsemes, 'filestr>>,
+    keyspaces: Vec<KeyspaceRef<'parsemes, 'filestr>>,
     all_actions: Vec<Action<'parsemes, 'filestr>>,
+}
+
+// Map Keyspace to Keyspace via Iterator interface with concrete types
+impl<'parsemes, 'filestr> KeyspaceOwner<'parsemes, 'filestr> {
+    pub fn to_iter<'a>(&'a self) -> KeyspaceIter<'a, 'parsemes, 'filestr> {
+        KeyspaceIter {
+            iter: self.keyspaces.iter(),
+            owner: self,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct KeyspaceIter<'keyspaces, 'parsemes, 'filestr> {
+    iter: std::slice::Iter<'keyspaces, KeyspaceRef<'parsemes, 'filestr>>,
+    owner: &'keyspaces KeyspaceOwner<'parsemes, 'filestr>,
+}
+
+#[derive(Debug)]
+pub struct Keyspace<'keyspaces, 'parsemes, 'filestr> {
+    pub title: Hotkey<'parsemes, 'filestr>,
+    pub actions: &'keyspaces [Action<'parsemes, 'filestr>],
+}
+
+impl<'keyspaces, 'parsemes, 'filestr> Iterator for KeyspaceIter<'keyspaces, 'parsemes, 'filestr> {
+    type Item = Keyspace<'keyspaces, 'parsemes, 'filestr>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter
+            .next()
+            .map(|KeyspaceRef { title, actions }| Keyspace {
+                title,
+                actions: &self.owner.all_actions[actions.start..actions.end],
+            })
+    }
 }
 
 /****************************************************************************
@@ -81,7 +128,7 @@ pub fn process<'parsemes, 'filestr>(
                 // is partitioned into null (not pushed to 'all_actions')
                 if !into_partitions.is_empty() {
                     // Pre-calculating 'max_depth' ensures >= one partition every 'col'
-                    keyspaces.push(Keyspace {
+                    keyspaces.push(KeyspaceRef {
                         title: &base[0].hotkey[0..col],
                         actions: cursor.move_to(all_actions.len()),
                     });
@@ -114,12 +161,11 @@ fn partition_to_action<'parsemes, 'filestr>(
     partition: &[Shortcut<'parsemes, 'filestr>],
 ) -> Action<'parsemes, 'filestr> {
     let first_shortcut = &partition[0];
+    let trigger = first_shortcut.hotkey[col].clone();
     if partition.len() == 1 && first_shortcut.hotkey.len() == col + 1 {
-        let chord = first_shortcut.hotkey[col].clone();
-        Action::Command(chord, first_shortcut.command)
+        Action::Command(trigger, first_shortcut.command)
     } else {
-        let shared_chord = &first_shortcut.hotkey[0..col + 1];
-        Action::SetState(shared_chord)
+        Action::SetState(&first_shortcut.hotkey[0..col + 1])
     }
 }
 
@@ -160,45 +206,4 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
         debug_assert!(!range.is_empty());
         into_store.push(&partition[range]);
     } // else do not push hotkeys without enough chords
-}
-
-/****************************************************************************
- * Printing
- ****************************************************************************/
-pub fn debug_print_keyspace_owner(
-    KeyspaceOwner {
-        keyspaces,
-        all_actions,
-    }: &KeyspaceOwner,
-) {
-    for Keyspace { title, actions } in keyspaces {
-        let actions = &all_actions[actions.start..actions.end];
-        let len = actions.len();
-        let action_string = actions
-            .iter()
-            .map(|action| match action {
-                Action::SetState(name) => format!(
-                    "set state {}",
-                    name.to_string_custom(),
-                ),
-                Action::Command(chord, command) => format!(
-                    "{} -> {:?}",
-                    chord.to_string_custom(),
-                    command
-                        .iter()
-                        .map(|with_span| with_span.as_str())
-                        .collect::<Vec<_>>()
-                        .join("")
-                ),
-            })
-            .collect::<Vec<_>>()
-            .join("\n  ");
-
-        println!(
-            "state {} {:?} {{\n  {}\n}}\n",
-            len,
-            title.to_string_custom(),
-            action_string,
-        );
-    }
 }

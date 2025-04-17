@@ -27,28 +27,76 @@ pub const SEPARATOR: [char; SEPARATOR_LEN] = {
 // a macro is #![feature(const_str_from_utf8_unchecked)]
 // See: https://github.com/rust-lang/rust/issues/75196
 macro_rules! build_available_keys {
-    ($( pub const $var:ident : $type:ty = [$( $val:literal, )*]; )*) => {
-        $( pub const $var: $type = [$( $val, )*]; )*
+    ($( pub const $var:ident : $type:ty, $enum:ident = [$( $val:literal, )*]; )*) => {
+    //($( pub const $var:ident : $type:ty, $enum:ident = { $($variant:ident => $val:literal, )*
+    //}; )*) => {
+        $(
+            pub const $var: $type = [$( $val, )*];
+            //enum $enum {
+            //}
+        )*
         pub const AVAILABLE_KEYS: &str =
             build_available_keys!(@join $( $( $val, )* )*);
+
     };
 
     (@join $first:literal, $( $val:literal, )*) => {
-        concat!($first, $(", ", $val, )*)
+        concat!($first, $(" ", $val, )*)
     };
 }
 
-build_available_keys! {
-    pub const MODIFIERS: [&str; 4] = ["alt", "ctrl", "shift", "super",];
-    pub const KEYCODES: [&str; 39] = [
-        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-        "Comma",
-        "Space",
-        "Return",
-    ];
+macro_rules! build_available_keys2 {
+    ($( pub const $var:ident : $type:ty, $Enum:ident = {
+        $($Variant:ident => $val:literal, )*
+    }; )*) => {
+        $(
+            pub const $var: $type = [$( $val, )*];
+
+            #[repr(usize)]
+            pub enum $Enum {
+                $( $Variant, )*
+            }
+        )*
+        pub const AVAILABLE_KEYS: &str =
+            build_available_keys!(@join $( $( $val, )* )*);
+
+
+    };
+    (@join $first:literal, $( $val:literal, )*) => {
+        concat!($first, $(" ", $val, )*)
+    };
 }
+
+
+build_available_keys2! {
+    pub const MODIFIERS: [&str; 4], Modifiers = {
+        Alt => "alt", Ctrl => "ctrl", Shift => "shift", Super => "super",
+    };
+    pub const KEYCODES: [&str; 40], Keycodes = {
+        Comma => ",",
+        Period => ".",
+        Zero => "0", One => "1", Two => "2", Thre => "3", Four => "4",
+        Five => "5", Six => "6", Seven => "7", Eight => "8", Nine => "9",
+        A => "a", B => "b", C => "c", D => "d", E => "e", F => "f", G => "g",
+        H => "h", I => "i", J => "j", K => "k", L => "l", M => "m", N => "n",
+        O => "o", P => "p", Q => "q", R => "r", S => "s", T => "t", U => "u",
+        V => "v", W => "w", X => "x", Y => "y", Z => "z",
+        Space => "Space",
+        Return => "Return",
+    };
+}
+
+//build_available_keys! {
+//    pub const MODIFIERS2: [&str; 4], Modifiers = ["alt", "ctrl", "shift", "super",];
+//    pub const KEYCODES2: [&str; 39], Keycodes = [
+//        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+//        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+//        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+//        "Comma",
+//        "Space",
+//        "Return",
+//    ];
+//}
 
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;
@@ -117,6 +165,14 @@ mod test {
         assert_is_unique(combined.clone(), "KEYCODE' together with 'MODIFIER");
 
         // Make sure we built 'AVAILABLE_KEYS' correctly
-        assert_eq!(combined.clone().join(", "), AVAILABLE_KEYS);
+        assert_eq!(combined.clone().join(" "), AVAILABLE_KEYS);
     }
+
+    #[test]
+    fn no_invalid_punctuation() {
+        let invalid_chars = ['"', ';', ' '];
+        debug_assert!(KEYCODES.iter().find(|s| s.contains(&invalid_chars[..])).is_none());
+        debug_assert!(MODIFIERS.iter().find(|s| s.contains(&invalid_chars[..])).is_none());
+    }
+
 }

@@ -1,16 +1,8 @@
 //run: cargo test -- --nocapture
 
-use crate::constants::{KEYCODES, MODIFIERS};
-use crate::precalculate_capacity_and_build;
+use crate::constants::KEYCODES;
 use crate::reporter::MarkupError;
 use std::ops::Range;
-
-pub trait Print {
-    fn string_len(&self) -> usize;
-    fn push_string_into(&self, buffer: &mut String);
-    // @TODO cfg(debug) only
-    fn to_string_custom(&self) -> String;
-}
 
 #[derive(Clone, Debug)]
 pub struct WithSpan<'filestr, T> {
@@ -53,6 +45,9 @@ impl Cursor {
         self.0 = index;
         from..index
     }
+    pub fn span_to(&self, index: usize) -> Range<usize> {
+        self.0..index
+    }
     pub fn width(&self, index: usize) -> usize {
         debug_assert!(index >= self.0);
         index - self.0
@@ -61,69 +56,12 @@ impl Cursor {
 
 pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
 
-impl<'owner, 'filestr> Print for Hotkey<'owner, 'filestr> {
-    precalculate_capacity_and_build!(self, buffer {
-        let mut iter = self.iter();
-        let delim = " ; ";
-    } {
-        if let Some(first) = iter.next() {
-            first.string_len() + iter
-                .map(|chord_span| delim.len() + chord_span.string_len())
-                .sum::<usize>()
-        } else {
-            0
-        } => if let Some(first) = iter.next() {
-            first.push_string_into(buffer);
-            iter.for_each(|chord_span| {
-                buffer.push_str(delim);
-                chord_span.push_string_into(buffer);
-
-            });
-        };
-    });
-}
-
 type ChordModifiers = u8;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Chord {
     pub key: usize,
     pub modifiers: ChordModifiers,
-}
-
-impl<'owner, 'filestr> Print for WithSpan<'filestr, Chord> {
-    precalculate_capacity_and_build!(self, buffer {
-        let Chord { key, modifiers } = self.data;
-        let mut mod_iter = MODIFIERS.iter().enumerate()
-            .filter(|(i, _)| modifiers & (1 << i) != 0);
-        let space = ' ';
-        debug_assert!(space.len_utf8() == 1);
-        let first = mod_iter.next();
-    } {
-        // Process the first element separately to simulate a join()
-        first.map(|(_, mod_str)| mod_str.len()).unwrap_or(0) =>
-            if let Some((_, mod_str)) = first {
-                buffer.push_str(mod_str);
-            };
-        mod_iter.map(|(_, mod_str)| mod_str.len() + 1).sum::<usize>() =>
-            mod_iter.for_each(|(_, mod_str)| {
-                buffer.push(space);
-                buffer.push_str(mod_str);
-            });
-
-
-        // Then the key itself
-        if key < KEYCODES.len() {
-            KEYCODES[key].len() + if first.is_some() { 1 } else { 0 }
-        } else {
-            0
-        } => if key < KEYCODES.len() {
-             if first.is_some() {
-                 buffer.push(space);
-             }
-             buffer.push_str(KEYCODES[key]);
-         };
-    });
 }
 
 impl Chord {
@@ -155,6 +93,7 @@ impl<'owner, 'filestr> std::cmp::Eq for WithSpan<'filestr, Chord> {}
 #[test]
 fn chord_modifiers_big_enough() {
     use std::mem;
+    use crate::constants::MODIFIERS;
 
     let modifier_size = mem::size_of::<ChordModifiers>() * 8;
     assert!(
@@ -167,21 +106,4 @@ fn chord_modifiers_big_enough() {
 pub struct Shortcut<'owner, 'filestr> {
     pub hotkey: Hotkey<'owner, 'filestr>,
     pub command: &'owner [WithSpan<'filestr, ()>],
-}
-
-impl<'owner, 'filestr> Print for Shortcut<'owner, 'filestr> {
-    precalculate_capacity_and_build!(self, buffer {} {
-        // First the modifiers
-        self.hotkey.string_len() + 2  => {
-            buffer.push('|');
-            self.hotkey.push_string_into(buffer);
-            buffer.push('|');
-        };
-        self.command.iter().map(|s| s.range.len()).sum::<usize>() => {
-            self.command.iter().for_each(|str_span| {
-                buffer.push_str(str_span.as_str());
-            });
-        };
-
-    });
 }

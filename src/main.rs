@@ -1,9 +1,11 @@
 //run: cargo test -- --nocapture
+// run: cargo run
 
 #![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
 
 mod constants;
+mod deserialise;
 mod errors;
 mod keyspace;
 mod lexer;
@@ -12,8 +14,18 @@ mod parser;
 mod reporter;
 mod structs;
 
+use deserialise::Print;
+use std::fs;
+
 fn main() {
-    println!("Hello, world!");
+    let file = fs::read_to_string("../../config.txt").unwrap();
+    let lexemes = lexer::process(file.as_str()).unwrap();
+    let parsemes = parser::process(&lexemes).unwrap();
+    //println!("{}", deserialise::ListPreview(&parsemes).to_string_custom());
+
+    let keyspaces = keyspace::process(&parsemes);
+    //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+    println!("{}", deserialise::I3(&keyspaces).to_string_custom());
 }
 
 #[test]
@@ -42,7 +54,7 @@ fn interpret() {
 |super {{c, t, g, k}} ; super {{b,s}}|
   $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
 {{{| cat -}}}
-|super shift q;t|
+#|super shift q;t|
 |super shift q|"#;
     //println!("{}", _file);
 
@@ -52,69 +64,12 @@ fn interpret() {
         //_lexemes.to_iter().for_each(debug_print_lexeme);
 
         let parsemes = parser::process(&_lexemes)?;
-        let mut _hotkeys = parsemes.make_owned_sorted_view();
-        //use structs::Print;
-        //_hotkeys
-        //    .iter()
-        //    .for_each(|shortcut| println!("{}", shortcut.to_string_custom()));
-        let _keyspaces = keyspace::process(&parsemes);
-        keyspace::debug_print_keyspace_owner(&_keyspaces);
+        //println!("{}", deserialise::ListPreview(&parsemes).to_string_custom());
+        let keyspaces = keyspace::process(&parsemes);
+        //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+        println!("{}", deserialise::I3(&keyspaces).to_string_custom());
         Ok(())
     })() {
         println!("{}", err);
     }
-}
-
-fn debug_print_lexeme(lexeme: lexer::Lexeme) {
-    let head = lexeme
-        .head
-        .iter()
-        .map(|x| format!("{:?}", x))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let body = lexeme
-        .body
-        .iter()
-        .map(|x| format!("{:?}", x))
-        .collect::<Vec<_>>()
-        .join(" ");
-    print!("|{}|\n  {}\n\n", head, body);
-}
-fn print_lexeme(lexeme: lexer::Lexeme) {
-    use constants::{KEYCODES, MODIFIERS};
-    use lexer::BodyType;
-    use lexer::HeadType;
-
-    let head = lexeme
-        .head
-        .iter()
-        .filter_map(|head_lexeme| match head_lexeme.data {
-            HeadType::Mod(k) => Some(MODIFIERS[k]),
-            HeadType::Key(k) => Some(KEYCODES[k]),
-            HeadType::ChoiceBegin => Some("{{"),
-            HeadType::ChoiceDelim => Some(","),
-            HeadType::ChoiceClose => Some("}}"),
-            HeadType::ChordDelim => Some(";"),
-            HeadType::Blank => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let body = lexeme
-        .body
-        .iter()
-        .map(|body_lexeme| match body_lexeme.data {
-            BodyType::Section => body_lexeme
-                .as_str()
-                .lines()
-                .map(|line| format!("{:?}", line))
-                .collect::<Vec<_>>()
-                .join("\n  "),
-            BodyType::ChoiceBegin => "\n  {{\n    ".to_string(),
-            BodyType::ChoiceDelim => ",\n    ".to_string(),
-            BodyType::ChoiceClose => ",\n  }}\n  ".to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("");
-    print!("|{}|\n  {}\n\n", head, body.trim());
 }
