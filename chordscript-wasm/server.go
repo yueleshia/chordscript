@@ -9,7 +9,7 @@ import (
 //run: go run ./%
 func main() {
     // API routes
-    http.Handle("/", http.FileServer(http.Dir("./")))
+    http.Handle("/", http.FileServer(http.Dir("./publish")))
 
     port := ":5000"
     fmt.Println("Server is running on port" + port)
