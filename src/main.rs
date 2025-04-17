@@ -6,8 +6,8 @@
 
 //#![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
+#![allow(clippy::uninit_assumed_init)]
 #![allow(clippy::mem_discriminant_non_enum)]
-#![feature(or_patterns)]
 
 mod constants;
 mod deserialise;
