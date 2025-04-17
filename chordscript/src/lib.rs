@@ -7,17 +7,83 @@ mod errors;
 mod macros;
 pub mod parser;
 mod reporter;
-pub mod templates;
+mod templates;
 
-pub use parser::{lexemes, shortcuts, keyspaces};
-pub use templates::{Consumer, PreallocPush};
+pub use templates::Consumer;
 
+use parser::shortcuts::ShortcutOwner;
+use templates::F;
+
+// @TODO: use runner
+#[derive(Debug)]
+pub enum Format<'a> {
+    Native(usize),
+    Shell { id: usize, runner: &'a str },
+}
+
+#[derive(Debug)]
+pub enum FormatError {
+    Invalid,
+    NativeUnsupported,
+    ShellUnsupported,
+}
+
+impl<'a> Format<'a> {
+    pub fn from_str(format: &str, maybe_runner: Option<&'a str>) -> Result<Self, FormatError> {
+        let id = templates::ID_TO_TYPE
+            .into_iter()
+            .enumerate()
+            .find_map(|(i, format_type)| match (format_type, maybe_runner) {
+                (F::N(name), None) if name == format => Some(Ok(i)),
+                (F::S(name), Some(_)) if name == format => Some(Ok(i)),
+                (F::S(name), Some(_)) if name == format => Some(Ok(i)),
+                (F::N(name), _) if name == format => Some(Err(FormatError::NativeUnsupported)),
+                (F::S(name), _) if name == format => Some(Err(FormatError::ShellUnsupported)),
+                _ => None,
+            })
+            .unwrap_or(Err(FormatError::Invalid))?;
+
+        Ok(match maybe_runner {
+            None => Format::Native(id),
+            Some(runner) => Format::Shell { id, runner },
+        })
+    }
+
+    pub fn pipe_stdout(&self, shortcut_owner: &ShortcutOwner, output: &mut std::io::Stdout) {
+        match self {
+            Self::Native(id) => templates::VTABLE_STDOUT[*id].pipe(shortcut_owner, output),
+            Self::Shell { id, runner } => {
+                templates::VTABLE_STDOUT[*id].pipe(shortcut_owner, output)
+            }
+        }
+    }
+
+    pub fn pipe_string(&self, shortcut_owner: &ShortcutOwner, output: &mut String) {
+        match self {
+            Self::Native(id) => templates::VTABLE_STRING[*id].pipe(shortcut_owner, output),
+            Self::Shell { id, runner } => {
+                templates::VTABLE_STRING[*id].pipe(shortcut_owner, output)
+            }
+        }
+    }
+    //pub fn deserialise<O: Consumer>(&self, shortcut_owner: &parser::shortcuts::ShortcutOwner, output: &mut O) {
+    //    use templates::PreallocPush;
+    //    match self{
+    //        Self::Native(t) => (*t).pipe(shortcut_owner, output),
+    //        _ => {}
+    //    }
+    //    //shortcut_owner.pipe(Shortcut)
+
+    //}
+}
 
 /****************************************************************************
  * Integration Tests
  ****************************************************************************/
 #[test]
 fn on_file() {
+    use parser::{keyspaces, lexemes, shortcuts};
+
     //let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
     let path = concat!("./wm-shortcuts");
     let file = std::fs::read_to_string(path).unwrap();
@@ -29,12 +95,17 @@ fn on_file() {
     // I should not use len() check with externally defined file, but it is
     // the quickest check to see if we altered the algorithm significantly
     println!("~~~~\n{}", _shortcuts.to_iter().count());
-    let mut lock = std::io::stdout();
-    let fmt = templates::Templates::ShellScript;
-    fmt.pipe_string(&_shortcuts, &mut String::with_capacity(fmt.len(&_shortcuts)));
-    fmt.pipe_stdout(&_shortcuts, &mut lock);
+
+    //let mut lock = std::io::stdout();
+    //let fmt = templates::Templates::ShellScript;
+    //fmt.pipe_string(
+    //    &_shortcuts,
+    //    &mut String::with_capacity(fmt.len(&_shortcuts)),
+    //);
+    //fmt.pipe_stdout(&_shortcuts, &mut lock);
+
     println!("~~~~");
-    //let _keyspaces = keyspace::process(&_shortcuts);
+    let _keyspaces = keyspaces::process(&_shortcuts);
     //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
 }
 
@@ -77,6 +148,8 @@ fn _interpret() {
 {{{| cat -}}}jam
 |super shift q|"#;
     //println!("{}", _file);
+
+    use parser::{keyspaces, lexemes, shortcuts};
 
     if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
         let _lexemes = lexemes::lex(_file)?;
@@ -186,4 +259,3 @@ pub fn add(input: &str) -> String {
 //    });
 //    Ok(())
 //}
-

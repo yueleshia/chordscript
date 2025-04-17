@@ -10,16 +10,27 @@ mod debug_shortcuts;
 mod i3_shell;
 mod shellscript;
 
+//macro_rules! row {
+//    ($Enum:ident :: $Variant:ident => $id:literal) => {
+//        $Enum::$Variant => $id
+//    };
+//}
+//
+//
+pub enum F { // Format
+    N(&'static str), // Native
+    S(&'static str), // Shell
+}
+
 array_index_by_enum!( TEMPLATE_COUNT: usize
     pub enum Templates {
-        ShellScript    => Templates::ShellScript    => "shell"           => &shellscript::Wrapper()     => &shellscript::Wrapper(),
-        I3Shell        => Templates::I3Shell        => "i3"              => &i3_shell::Wrapper()        => &i3_shell::Wrapper(),
-        DebugShortcuts => Templates::DebugShortcuts => "debug-shortcuts" => &debug_shortcuts::Wrapper() => &debug_shortcuts::Wrapper(),
+        ShellScript    => F::N("shell")           => &shellscript::Wrapper()     => &shellscript::Wrapper(),
+        I3Shell        => F::S("i3")              => &i3_shell::Wrapper()        => &i3_shell::Wrapper(),
+        DebugShortcuts => F::N("debug-shortcuts") => &debug_shortcuts::Wrapper() => &debug_shortcuts::Wrapper(),
     }
-    => 1 pub const ID_TO_TEMPLATE: [Templates]
-    => 2 pub const ID_TO_STR: [&str]
-    => 3 pub const VTABLE_STRING: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, String>]
-    => 4 pub const VTABLE_STDOUT: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, io::Stdout>]
+    => 1 pub const ID_TO_TYPE: [F]
+    => 2 pub const VTABLE_STRING: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, String>]
+    => 3 pub const VTABLE_STDOUT: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, io::Stdout>]
 );
 
 pub trait Consumer {
@@ -60,17 +71,17 @@ pub trait PreallocPush<T, U: Consumer>: PreallocLen<T> {
     fn pipe(&self, extra: T, pipe: &mut U);
 }
 
-impl Templates {
-    pub fn len(&self, owner: &ShortcutOwner<'_>) -> usize {
-        VTABLE_STDOUT[self.id()].len(owner)
-    }
-    pub fn pipe_stdout(&self, owner: &ShortcutOwner<'_>, buffer: &mut io::Stdout) {
-        VTABLE_STDOUT[self.id()].pipe(owner, buffer);
-    }
-    pub fn pipe_string(&self, owner: &ShortcutOwner<'_>, buffer: &mut String) {
-        VTABLE_STRING[self.id()].pipe(owner, buffer);
-    }
-}
+//impl Templates {
+//    pub fn len(&self, owner: &ShortcutOwner<'_>) -> usize {
+//        VTABLE_STDOUT[self.id()].len(owner)
+//    }
+//    pub fn pipe_stdout(&self, owner: &ShortcutOwner<'_>, buffer: &mut io::Stdout) {
+//        VTABLE_STDOUT[self.id()].pipe(owner, buffer);
+//    }
+//    pub fn pipe_string(&self, owner: &ShortcutOwner<'_>, buffer: &mut String) {
+//        VTABLE_STRING[self.id()].pipe(owner, buffer);
+//    }
+//}
 
 const DEBUG_CHORD_CONSTANTS: DeserialiseChord = DeserialiseChord {
     delim: " ; ",
