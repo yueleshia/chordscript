@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 mod errors;
+mod lexer;
+mod messages;
 
 fn main() {
     println!("Hello, world!");
@@ -20,6 +22,7 @@ fn interpret() {
 |super shift q|"#;
     //println!("{}", _file);
 
-    let error = errors::MarkupLineError::new("what a failure", _file, 3, 2, 5);
-    println!("{}", error);
+    let _error = errors::MarkupLineError::new("what a failure", _file, 3, 2, 5);
+    lexer::process(_file).unwrap();
+    //println!("{}", error);
 }
