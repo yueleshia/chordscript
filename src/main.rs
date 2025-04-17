@@ -21,10 +21,31 @@ use std::fs;
 //use std::io::{self, Write};
 use std::io;
 
+const DESCRIPTION: &str = "\
+Hello
+";
+
+//run: cargo run -- debug-shortcuts --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    match parse_args(&args) {
+    let raw_args = std::env::args().collect::<Vec<_>>();
+
+    let mut options = getopts::Options::new();
+    // Yes, we check for '-h' or '--help' twice
+    options.optflag("h", "help", "print this help menu");
+    options.reqopt(
+        "c",
+        "config",
+        "The file containing the shortcuts",
+        "FILENAME",
+    );
+
+    // Want to exit on help flag no matter want first
+    match handle_help_flag(&raw_args)
+        .and_then(|_| options.parse(&raw_args[1..]).map_err(Errors::Cli))
+        .and_then(subcommands)
+    {
         Ok(()) => std::process::exit(0),
+        Err(Errors::Help) => eprintln!("{}", "Help!"),
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Debug(err)) => eprintln!("{}", err),
@@ -33,157 +54,88 @@ fn main() {
     std::process::exit(1);
 }
 
-const DESCRIPTION: &str = "\
-Hello
-";
+/****************************************************************************
+ * Stuff
+ ****************************************************************************/
 
 enum Errors {
+    Help,
     Cli(getopts::Fail),
     Io(io::Error),
     Debug(String),
     //Parse(reporter::MarkupError),
 }
 
-
-macro_rules! subcommands {
-    ($args:ident | $pargs:ident $shortcuts:ident $keyspaces:ident
-        match ($stuff:expr) {
-            $( $command:literal @$type:ident ($( $bool:ident ),*) => {
-                $( $definition:stmt; )*
-            } )*
+fn handle_help_flag(input: &[String]) -> Result<(), Errors> {
+    for arg in &input[1..] {
+        match arg.as_str() {
+            "--" => break,
+            "-h" | "--help" => return Err(Errors::Help),
+            _ => {}
         }
-    ) => {
-        $( debug_assert_ne!($command, "subcommands"); )*
-        match $stuff {
-            $( Some($command) => {
-                subcommands!(@$type $args $pargs($( $bool ),*) $shortcuts $keyspaces);
-                $( $definition )*
-            } )*
-            Some("subcommands") => print!("{}", concat!("", $( $command, "\n" ),*)),
-            x => panic!("Invalid command {:?}", x),
-        }
-    };
-
-    (@shortcuts $args:ident $pargs:ident($( $bool:ident ),*) $shortcuts:ident $_:ident) => {
-        let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
-            .map_err(Errors::Cli)?;
-        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        let lexemes = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
-        //let _parser = parser::parse(lexemes);
-        let mut $shortcuts = parser::parse(lexemes);
-        //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
-        //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
-    };
-
-    (@keyspaces
-        $args:ident $pargs:ident($( $bool:ident ),*)
-        $shortcuts:ident $keyspaces:ident
-    ) => {
-        let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
-            .map_err(Errors::Cli)?;
-        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-        let lexemes = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
-        let mut $shortcuts = parser::parse(lexemes);
-        //let mut $keyspaces = keyspace::process(&$shortcuts);
-        //let $shortcuts = parser::process(lexemes).map_err(Errors::Parse)?;
-        //let $keyspaces = keyspace::process(&$shortcuts);
-    };
-}
-
-//run: cargo run -- shortcuts --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
-fn parse_args(args: &[String]) -> Result<(), Errors> {
-    let program = &args[0];
-    let args = &args[1..];
-    let pargs = {
-        let opts = options(OptState::DetectHelp, false, false);
-        let pargs = opts.parse(args).map_err(Errors::Cli)?;
-        if pargs.opt_present("h") {
-            println!("{}\n{}", program, opts.usage(DESCRIPTION));
-            return Ok(());
-        }
-        pargs
-    };
-
-    subcommands!(args | pargs shortcuts keyspaces
-        match (pargs.free.get(0).map(String::as_str)) {
-            "i3" @keyspaces (true, true) => {
-                //let script_pathstr = pargs.opt_str("s").unwrap();
-                //let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
-                //let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
-                //script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
-
-                //let i3_config = deserialise::I3Shell(&keyspaces);
-                //let mut buffer = String::with_capacity(i3_config.string_len());
-                //i3_config.push_string_into(&mut buffer);
-                //println!("{}", buffer);
-            }
-            "shortcuts" @shortcuts (true, false) => {
-                println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
-            }
-            "shortcuts-all-debug" @shortcuts (true, false) => {
-                println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
-            }
-            "keyspaces" @keyspaces (true, false) => {
-                //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
-            }
-            "sh" @shortcuts (true, false) => {
-                //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
-            }
-
-        }
-    );
-    Ok(())
-}
-
-
-/****************************************************************************
- * Helpers
- ****************************************************************************/
-
-enum OptState {
-    DetectHelp,
-    Process,
-
-}
-
-fn add(opts: &mut getopts::Options, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
-    if is_required {
-        opts.reqopt(a, b, c, d);
+    }
+    if input[1..].len() == 0 {
+        Err(Errors::Help)
     } else {
-        opts.optopt(a, b, c, d);
+        Ok(())
     }
 }
 
-fn add2(opts: &mut getopts::Options, state: &OptState, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
-    match (state, is_required) {
-        (OptState::DetectHelp, _) => opts.optopt(a,b,c,d),
-        (OptState::Process, true) => opts.reqopt(a, b, c, d),
-        (OptState::Process, false) => opts,
-    };
-}
+fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
+    // Must be macro as need to own 'file' in this namespace
+    // But want "i3" etc. recognised before requiring 'file'
+    macro_rules! process {
+        (let $lexemes:ident = @lex $matches:ident) => {
+            let path = $matches.opt_str("c").unwrap();
+            let file = fs::read_to_string(path).map_err(Errors::Io)?;
+            let $lexemes = lexer::lex(&file).map_err(Errors::Debug)?;
+            //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+        };
+        (let $shortcuts:ident = @parse $matches:ident) => {
+            process!(let lex_output = @lex $matches);
+            let $shortcuts = parser::parse(lex_output);
+            //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+        };
+        (let $keyspace:ident = @keyspace $matches:ident) => {
+            process!(let parse_output = @parse $matches);
+            //let $keyspaces = keyspace::process(&$shortcuts);
+            let $keyspace = parse_output;
+        };
+    }
 
-fn options(state: OptState, need_config: bool, need_script: bool) -> getopts::Options {
-    let mut opts = getopts::Options::new();
-    opts.optflag("h", "help", "print this help menu");
-    add2(
-        &mut opts,
-        &state,
-        need_script,
-        "s",
-        "script",
-        "File to output a shellscript",
-        "FILENAME",
-    );
-    add2(
-        &mut opts,
-        &state,
-        need_config,
-        "c",
-        "config",
-        "The config file that specifies hotkeys are we want to compile",
-        "FILENAME",
-    );
-    opts
+    match matches.free.get(0).map(String::as_str) {
+        Some("i3") => {
+            //let script_pathstr = pargs.opt_str("s").unwrap();
+            //let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
+            //let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
+            //script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
+
+            //let i3_config = deserialise::I3Shell(&keyspaces);
+            //let mut buffer = String::with_capacity(i3_config.string_len());
+            //i3_config.push_string_into(&mut buffer);
+            //println!("{}", buffer);
+        }
+        Some("shortcuts") => {
+            process!(let shortcuts = @parse matches);
+            println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
+        }
+        Some("keyspaces") => {
+            //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+        }
+        Some("sh") => {
+            //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
+        }
+
+        Some("debug-shortcuts") | None => {
+            process!(let lexemes = @lex matches);
+            let shortcuts = parser::parse_unsorted(lexemes);
+            println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
+        }
+
+        Some(_) => return Err(Errors::Help),
+
+    }
+    Ok(())
 }
 
 /****************************************************************************
