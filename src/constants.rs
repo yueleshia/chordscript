@@ -28,85 +28,44 @@ pub const WHITESPACE: [char; 25] = [
     '\u{3000}',
 ];
 
-const WHITESPACE_LEN: usize = WHITESPACE.len();
-const SEPARATOR_LEN: usize = WHITESPACE_LEN + 1;
+const SEPARATOR_LEN: usize = WHITESPACE.len() + 1;
 pub const SEPARATOR: [char; SEPARATOR_LEN] = {
     let base = [' '; SEPARATOR_LEN];
     let mut base = map!(
         base: [char; SEPARATOR_LEN]
-        |> i in 0..WHITESPACE_LEN => { base[i] = WHITESPACE[i] }
+        |> i in 0..WHITESPACE.len() => { base[i] = WHITESPACE[i] }
     );
     // Add these
     base[25] = '+';
     base
 };
 
-#[test]
-fn check_keys_are_correct() {
-    assert!(WHITESPACE.iter().all(|c| c.is_whitespace()));
-    assert_eq!(&WHITESPACE, &SEPARATOR[0..WHITESPACE.len()]);
-    assert!(KEYCODES.iter()
-        .chain(MODIFIERS.iter())
-        .all(|k| k.len() <= KEYSTR_UTF8_MAX_LEN));
-    assert!(KEYCODES.iter().chain(MODIFIERS.iter())
-        .any(|k| k.len() == KEYSTR_UTF8_MAX_LEN));
+// The only other way I can think of building 'AVAILABLE_KEYS' without using
+// a macro is #![feature(const_str_from_utf8_unchecked)]
+// See: https://github.com/rust-lang/rust/issues/75196
+macro_rules! build_available_keys {
+    ($( pub const $var:ident : $type:ty = [$( $val:literal, )*]; )*) => {
+        $( pub const $var: $type = [$( $val, )*]; )*
+        pub const AVAILABLE_KEYS: &str =
+            build_available_keys!(@join $( $( $val, )* )*);
+    };
 
-    // Make sure they do not intersect
-    let mut combined = KEYCODES.iter().chain(MODIFIERS.iter()).collect::<Vec<_>>();
-    combined.sort_unstable();
-    let len = combined.len();
-    combined.dedup();
-    assert_eq!(len, combined.len(), "Some keys are specified both in KEYCODES and MODIFIERS");
+    (@join $first:literal, $( $val:literal, )*) => {
+        concat!($first, $(", ", $val, )*)
+    };
 }
 
-pub const MODIFIERS: [&str; 4] = [
-    "alt",
-    "ctrl",
-    "shift",
-    "super",
-];
-
-pub const KEYCODES: [&str; 39] = [
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "a",
-    "b",
-    "c",
-    "d",
-    "e",
-    "f",
-    "g",
-    "h",
-    "i",
-    "j",
-    "k",
-    "l",
-    "m",
-    "n",
-    "o",
-    "p",
-    "q",
-    "r",
-    "s",
-    "t",
-    "u",
-    "v",
-    "w",
-    "x",
-    "y",
-    "z",
-    "Comma",
-    "Space",
-    "Return",
-];
+build_available_keys! {
+    pub const MODIFIERS: [&str; 4] = ["alt", "ctrl", "shift", "super",];
+    pub const KEYCODES: [&str; 39] = [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+        "Comma",
+        "Space",
+        "Return",
+    ];
+}
 
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;
@@ -128,19 +87,53 @@ pub const KEYSTR_UTF8_MAX_LEN: usize = {
     )
 };
 
-#[test]
-fn is_keycodes_sorted_and_unique() {
-    // Check if KEYCODES is sorted
-    let mut sorted = KEYCODES.clone();
-    sorted.sort_by(|a, b| if a.len() == b.len() {
-        a.cmp(b)
-    } else {
-        a.len().cmp(&b.len())
-    });
-    assert_eq!(KEYCODES, sorted);
+// Many tests to check for human input error
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    // Check for duplicates
-    let mut as_sorted_vec = sorted.to_vec();
-    as_sorted_vec.dedup();
-    assert!(as_sorted_vec.len() == sorted.len(), "KEYCODES has a duplicated key");
+    fn assert_is_unique<T: Ord>(mut input: Vec<T>, msg: &str) {
+        let before_sort_len = input.len();
+        input.sort_unstable();
+        input.dedup();
+        assert_eq!(before_sort_len, input.len(), "'{}' has a duplicate", msg);
+    }
+
+    #[test]
+    fn arrays_are_unique_and_valid() {
+        assert!(WHITESPACE.iter().all(|c| c.is_whitespace()));
+        assert_eq!(&WHITESPACE, &SEPARATOR[0..WHITESPACE.len()]);
+
+        assert_is_unique(WHITESPACE.to_vec(), stringify!(WHITESPACE));
+        assert_is_unique(SEPARATOR.to_vec(), stringify!(SEPARATOR));
+        assert_is_unique(KEYCODES.to_vec(), stringify!(KEYCODES));
+    }
+
+    #[test]
+    fn keycodes_is_sorted() {
+        // Check if KEYCODES is sorted
+        let mut sorted = KEYCODES.clone();
+        sorted.sort_by(|a, b| if a.len() == b.len() {
+            a.cmp(b)
+        } else {
+            a.len().cmp(&b.len())
+        });
+        assert_eq!(KEYCODES, sorted);
+    }
+
+    #[test]
+    fn key_and_mod_for_stats_and_overlap() {
+        let mut combined = MODIFIERS.to_vec();
+        combined.append(&mut KEYCODES.to_vec());
+        let combined = combined; // remove mut
+
+        assert!(combined.iter().all(|k| k.len() <= KEYSTR_UTF8_MAX_LEN));
+        assert!(combined.iter().any(|k| k.len() == KEYSTR_UTF8_MAX_LEN));
+
+        // Make sure they do not intersect
+        assert_is_unique(combined.clone(), "KEYCODE' together with 'MODIFIER");
+
+        // Make sure we built 'AVAILABLE_KEYS' correctly
+        assert_eq!(combined.clone().join(", "), AVAILABLE_KEYS);
+    }
 }

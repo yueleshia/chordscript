@@ -81,7 +81,7 @@ pub enum BodyLexeme<'a> {
 
 define_syntax! { count_fsm, lex_fsm, tokens,
     Head {
-        (',', _, _) => panic!(messages::HEAD_COMMA_OUTSIDE_BRACKETS), {};
+        (',', index, _) => panic!(messages::HEAD_COMMA_OUTSIDE_BRACKETS), {};
         ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
 
         ('|', index, _) =>
@@ -256,8 +256,8 @@ pub fn process(filestr: &str) -> Result<LexemeLists, MarkupLineError> {
         }
     }
 
-    assert!(lexemes.heads.len() == capacity.1, "{} != {}", lexemes.heads.len(), capacity.1);
-    assert!(lexemes.bodys.len() == capacity.2, "{} != {}", lexemes.bodys.len(), capacity.2);
+    debug_assert!(lexemes.heads.len() == capacity.1, "{} != {}", lexemes.heads.len(), capacity.1);
+    debug_assert!(lexemes.bodys.len() == capacity.2, "{} != {}", lexemes.bodys.len(), capacity.2);
 
 
     Ok(lexemes)
@@ -297,6 +297,10 @@ impl<'a> LexemeLists<'a> {
             panic!("Invalid key. {} ", keystr)
         }
     }
+
+    //fn push_into_head(&mut self, head_lexeme: HeadLexeme<'a>, source: &'a str) {
+    //    self.heads.push(source, head_lexeme);
+    //}
 }
 
 struct FileIter<'a> {
@@ -342,6 +346,10 @@ impl<'a> FileIter<'a> {
             }
         }
     }
+
+    //fn report() -> Result<(), errors::MarkupLineError> {
+    //    return Err();
+    //}
 }
 
 impl<'a> Iterator for FileIter<'a> {
