@@ -31,7 +31,103 @@ fn main() {
 }
 
 const DESCRIPTION: &str = "\
-Hello";
+Hello
+";
+
+enum Errors {
+    Cli(getopts::Fail),
+    Io(io::Error),
+    Parse(reporter::MarkupError),
+}
+
+
+macro_rules! subcommands {
+    ($args:ident | $pargs:ident $shortcuts:ident $keyspaces:ident
+        match ($stuff:expr) {
+            $( $command:literal @$type:ident ($( $bool:ident ),*) => {
+                $( $definition:stmt; )*
+            } )*
+        }
+    ) => {
+        $( debug_assert_ne!($command, "subcommands"); )*
+        match $stuff {
+            $( Some($command) => {
+                subcommands!(@$type $args $pargs($( $bool ),*) $shortcuts $keyspaces);
+                $( $definition )*
+            } )*
+            Some("subcommands") => print!("{}", concat!("", $( $command, "\n" ),*)),
+            x => panic!("Invalid command {:?}", x),
+        }
+    };
+
+    (@shortcuts $args:ident $pargs:ident($( $bool:ident ),*) $shortcuts:ident $_:ident) => {
+        let $pargs = options($( $bool ),*).parse($args).map_err(Errors::Cli)?;
+        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
+        let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+        let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+    };
+
+    (@keyspaces
+        $args:ident $pargs:ident($( $bool:ident ),*)
+        $shortcuts:ident $keyspaces:ident
+    ) => {
+        let $pargs = options($( $bool ),*).parse($args).map_err(Errors::Cli)?;
+        let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
+        let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+        let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+        let $keyspaces = keyspace::process(&$shortcuts);
+    };
+}
+
+//run: cargo run -- list-debug --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
+fn parse_args(args: &[String]) -> Result<(), Errors> {
+    let program = &args[0];
+    let args = &args[1..];
+    let pargs = {
+        let opts = options(false, false);
+        let pargs = opts.parse(args).map_err(Errors::Cli)?;
+        if pargs.opt_present("h") {
+            println!("{}\n{}", program, opts.usage(DESCRIPTION));
+            return Ok(());
+        }
+        pargs
+    };
+
+    subcommands!(args | pargs shortcuts keyspaces
+        match (pargs.free.get(0).map(String::as_str)) {
+            "i3" @keyspaces (true, true) => {
+                let script_pathstr = pargs.opt_str("s").unwrap();
+                let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
+                let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
+                script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
+
+                let i3_config = deserialise::I3Shell(&keyspaces);
+                let mut buffer = String::with_capacity(i3_config.string_len());
+                i3_config.push_string_into(&mut buffer);
+                println!("{}", buffer);
+            }
+            "shortcuts" @shortcuts (true, false) => {
+                println!("{}", deserialise::ListPreview(&shortcuts).to_string_custom());
+            }
+            "shortcuts-debug" @shortcuts (true, false) => {
+                println!("{}", deserialise::ListDebug(&shortcuts).to_string_custom());
+            }
+            "keyspaces" @keyspaces (true, false) => {
+                println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+            }
+            "sh" @shortcuts (true, false) => {
+                println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
+            }
+
+        }
+    );
+    Ok(())
+}
+
+
+/****************************************************************************
+ * Helpers
+ ****************************************************************************/
 
 fn add(opts: &mut getopts::Options, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
     if is_required {
@@ -63,59 +159,9 @@ fn options(need_config: bool, need_script: bool) -> getopts::Options {
     opts
 }
 
-enum Errors {
-    Cli(getopts::Fail),
-    Io(io::Error),
-    Parse(reporter::MarkupError),
-}
-//run: cargo run -- list-debug --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
-fn parse_args(args: &[String]) -> Result<(), Errors> {
-    let program = &args[0];
-    let args = &args[1..];
-    {
-        let opts = options(false, false);
-        if opts.parse(args).map_err(Errors::Cli)?.opt_present("h") {
-            println!("{}\n{}", program, opts.usage(DESCRIPTION));
-            return Ok(());
-        }
-    }
-
-    let pargs = options(true, false).parse(args).map_err(Errors::Cli)?;
-
-    let file = fs::read_to_string(pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
-    let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
-    let parsemes = parser::process(&lexemes).map_err(Errors::Parse)?;
-
-    match pargs.free.get(0).map(String::as_str) {
-        Some("i3") => {
-            let pargs = options(true, true).parse(args).map_err(Errors::Cli)?;
-            let script_pathstr = pargs.opt_str("s").unwrap();
-
-            let shell = deserialise::Shellscript(&parsemes).to_string_custom();
-            let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
-            script_file
-                .write_all(shell.as_bytes())
-                .map_err(Errors::Io)?;
-
-            let keyspaces = keyspace::process(&parsemes);
-            let i3_config = deserialise::I3Shell(&keyspaces);
-            let mut buffer = String::with_capacity(i3_config.string_len());
-            i3_config.push_string_into(&mut buffer);
-            println!("{}", buffer);
-        }
-        Some("list") => println!("{}", deserialise::ListPreview(&parsemes).to_string_custom()),
-        Some("keyspaces") => println!(
-            "{}",
-            deserialise::KeyspacePreview(&keyspace::process(&parsemes)).to_string_custom()
-        ),
-        Some("list-debug") => println!("{}", deserialise::ListDebug(&parsemes).to_string_custom()),
-
-        Some("sh") => println!("{}", deserialise::Shellscript(&parsemes).to_string_custom()),
-        x => panic!("Invalid command {:?}", x),
-    }
-    Ok(())
-}
-
+/****************************************************************************
+ * Integration Tests
+ ****************************************************************************/
 #[test]
 fn interpret() {
     let _file = r#"
