@@ -21,15 +21,15 @@ impl<'parsemes, 'filestr> Print for ListAll<'parsemes, 'filestr> {
         let placeholders = self.0.to_iter().filter(|sc| sc.is_placeholder);
         let reals = self.0.to_iter().filter(|sc| !sc.is_placeholder);
     } {
-        13 => buffer.push_str("Placeholders\n");
-        11 => buffer.push_str("==========\n");
+        "Placeholders\n";
+        "==========\n";
         placeholders.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
             => placeholders.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
 
-        1 => buffer.push('\n');
+        "\n";
 
-        15 => buffer.push_str("Real Shortcuts\n");
-        11 => buffer.push_str("==========\n");
+        "Real Shortcuts\n";
+        "==========\n";
         reals.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
             => reals.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
     });
@@ -40,8 +40,8 @@ impl<'parsemes, 'filestr> Print for ListReal<'parsemes, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
         let reals = self.0.to_iter().filter(|sc| !sc.is_placeholder);
     } {
-        15 => buffer.push_str("Real Shortcuts\n");
-        11 => buffer.push_str("==========\n");
+        "Real Shortcuts\n";
+        "==========\n";
         reals.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
             => reals.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
     });
