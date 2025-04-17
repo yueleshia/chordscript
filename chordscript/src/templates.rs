@@ -64,6 +64,15 @@ fn asdf() {
         .expect("unreachable");
 }
 
+impl<'filestr, 'b> PreallocPush<'filestr, &'b ShortcutOwner<'filestr>> for Templates {
+    fn len(&self, owner: &'b ShortcutOwner<'filestr>) -> usize {
+        VTABLE[self.id()].len(owner)
+    }
+    fn push_into(&self, owner: &'b ShortcutOwner<'filestr>, buffer: &mut Vec<&'filestr str>) {
+        VTABLE[self.id()].push_into(owner, buffer);
+    }
+}
+
 impl Templates {
     #[allow(dead_code)]
     pub fn pipe<T: Write>(&self, shortcuts: &ShortcutOwner, stream: &mut T) -> IoResult<()> {
