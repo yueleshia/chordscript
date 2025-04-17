@@ -1,0 +1,10 @@
+* Remove/refactor the 'array!' macro (hard to read)
+* Change 'list_preview.rs' and related functions to include 'default'
+* Add literal '{{{' '}}}' syntax back
+* Add strip leading and trailing whitespace syntax
+* Refactor TrimEscapeStrList and probably the other methods
+* Benchmark lexer since we have it set up to be able to calculate preallocating space and 
+* Clear TODOs
+* Report 'Chord' errors properly, this means highlighting 4 keys (4 sources from 3 modifiers + 1 key)
+* Add support for leftwm
+* Add support for tmux

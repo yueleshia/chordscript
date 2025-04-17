@@ -1,8 +1,8 @@
 // run: cargo test
-// run: cargo test -- --nocapture
+//run: cargo test -- --nocapture
 // run: cargo run -- --help
 // run: cargo run --release
-//run: cargo run -- i3-shell --config $XDG_CONFIG_HOME/rc/wm-shortcuts -s $HOME/interim/hk/script.sh
+// run: cargo run -- i3-shell --config $XDG_CONFIG_HOME/rc/wm-shortcuts -s $HOME/interim/hk/script.sh
 
 //#![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
@@ -175,11 +175,14 @@ fn on_file() {
     let file = fs::read_to_string(path).unwrap();
     let _lexemes = lexer::lex(&file).or_die(1);
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
+    //println!("\n~~~~~~\n");
     let _parsemes = parser::parse(_lexemes).or_die(1);
     println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
+    let _keyspaces = keyspace::process(&_parsemes);
+    println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
 }
-#[test]
-fn interpret() {
+//#[test]
+fn _interpret() {
     let _file = r#"
 #
 #hello
