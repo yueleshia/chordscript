@@ -17,10 +17,11 @@ body {
   gap:     10px;
   grid-template-areas:
     "header   header header    header header"
-    "gutter-l left   gutter-m  right  gutter-r"
+    "gutter-l stdin   gutter-m  stdout  gutter-r"
+    "gutter-l stderr   gutter-m  stdout  gutter-r"
   ;
   grid-template-columns: 10px 1fr 10px 1fr 10px;
-  grid-template-rows:    30px 1fr;
+  grid-template-rows:    30px 1fr 6em;
 }
 
 header {
@@ -28,11 +29,12 @@ header {
   background: #333333;
 }
 header                  { width: 100%; }
-.left, .right, textarea { width: 100%; height: 97%; }
+.left, .right, textarea { width: 100%; height: 100%; }
 
 header     { grid-area: header; }
-.left      { grid-area: left; }
-.right     { grid-area: right; }
+.stdin     { grid-area: stdin; }
+.stderr    { grid-area: stderr; }
+.stdout    { grid-area: stdout; }
 .gutter-l  { grid-area: gutter-l; }
 .gutter-m  { grid-area: gutter-m; }
 .gutter-r  { grid-area: gutter-r; }
@@ -46,12 +48,15 @@ textarea {}
 
       <header>header</header>
       <div class="gutter-l"></div>
-      <div class="left"><textarea id="input">|super + d| dmenu run</textarea></div>
+      <div class="stdin"><textarea id="input">|super + d| dmenu run</textarea></div>
+      <div class="stderr"><textarea id="error"></textarea></div>
       <div class="gutter-m"></div>
-      <div class="right"><textarea id="output">Please enable JavaScript for this to work.</textarea></div>
+      <div class="stdout"><textarea id="output">Please enable JavaScript for this to work.</textarea></div>
       <div class="gutter-r"></div>
     </div>
     <!-- Note the usage of `type=module` here as this is an ES6 module -->
+
+    <!--run: ../make.sh -->
     <script type="module">
       // Use ES module import syntax to import functionality from the module
       // that we have compiled.
@@ -60,14 +65,19 @@ textarea {}
       // will "boot" the module and make it ready to use. Currently browsers
       // don't support natively imported WebAssembly as an ES module, but
       // eventually the manual initialization won't be required!
-      import init, { add } from './chordscript_wasm.js';
+      import init, { parse } from './chordscript_wasm.js';
 
       var is_push_change = false;
       function signal_change() { is_push_change = true; }
 
       function side_effect() {
         var input = document.getElementById("input").value;
-        document.getElementById("output").value = add(input);
+        try {
+          document.getElementById("output").value = parse(input, 0);
+          document.getElementById("error").value = "";
+        } catch (err) {
+          document.getElementById("error").value = err;
+        }
       }
 
       console.log(frame_cursor);

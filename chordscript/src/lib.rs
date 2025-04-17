@@ -16,9 +16,9 @@ use templates::F;
 
 // @TODO: use runner
 #[derive(Debug)]
-pub enum Format<'a> {
-    Native(usize),
-    Shell { id: usize, runner: &'a str },
+pub struct Format<'a> {
+    pub id: usize,
+    pub runner: &'a str,
 }
 
 #[derive(Debug)]
@@ -29,6 +29,7 @@ pub enum FormatError {
 }
 
 impl<'a> Format<'a> {
+    // Used by cli
     pub fn from_str(format: &str, maybe_runner: Option<&'a str>) -> Result<Self, FormatError> {
         let id = templates::ID_TO_TYPE
             .into_iter()
@@ -43,28 +44,21 @@ impl<'a> Format<'a> {
             })
             .unwrap_or(Err(FormatError::Invalid))?;
 
-        Ok(match maybe_runner {
-            None => Format::Native(id),
-            Some(runner) => Format::Shell { id, runner },
+        Ok(Format {
+            id,
+            runner: maybe_runner.unwrap_or("")
         })
     }
 
     pub fn pipe_stdout(&self, shortcut_owner: &ShortcutOwner, output: &mut std::io::Stdout) {
-        match self {
-            Self::Native(id) => templates::VTABLE_STDOUT[*id].pipe(shortcut_owner, output),
-            Self::Shell { id, runner } => {
-                templates::VTABLE_STDOUT[*id].pipe(shortcut_owner, output)
-            }
-        }
+        templates::VTABLE_STDOUT[self.id].pipe(shortcut_owner, output)
     }
 
-    pub fn pipe_string(&self, shortcut_owner: &ShortcutOwner, output: &mut String) {
-        match self {
-            Self::Native(id) => templates::VTABLE_STRING[*id].pipe(shortcut_owner, output),
-            Self::Shell { id, runner } => {
-                templates::VTABLE_STRING[*id].pipe(shortcut_owner, output)
-            }
-        }
+    pub fn pipe_to_string(&self, shortcut_owner: &ShortcutOwner) -> String {
+        let template = templates::VTABLE_STRING[self.id];
+        let mut buffer = String::with_capacity(template.len(shortcut_owner));
+        template.pipe(shortcut_owner, &mut buffer);
+        buffer
     }
     //pub fn deserialise<O: Consumer>(&self, shortcut_owner: &parser::shortcuts::ShortcutOwner, output: &mut O) {
     //    use templates::PreallocPush;
