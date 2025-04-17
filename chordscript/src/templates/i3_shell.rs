@@ -46,7 +46,7 @@ const UNUSED: DeserialiseChord = DeserialiseChord {
 };
 
 impl<'filestr, 'b> PreallocPush<'filestr, DeserialiseChord> for Action<'b, 'filestr> {
-    sidebyside_len_and_push!(len, push_into, self: &Self, _a: DeserialiseChord, buffer: 'filestr {} {
+    sidebyside_len_and_push!(len, push_into (self: &Self, _a: DeserialiseChord, buffer: 'filestr) {} {
         "bindsym ";
         CHORD_MAX_PUSH_LEN => self.key_trigger().chord.push_into(KEYBIND_CONSTANTS, buffer);
         1 => match self {
@@ -81,7 +81,7 @@ impl<'filestr, 'b> PreallocPush<'filestr, DeserialiseChord> for Action<'b, 'file
 impl<'filestr, 'b, 'owner> PreallocPush<'filestr, DeserialiseChord>
     for Keyspace<'owner, 'b, 'filestr>
 {
-    sidebyside_len_and_push!(len, push_into, self: &Self, _a: DeserialiseChord, buffer: 'filestr {} {
+    sidebyside_len_and_push!(len, push_into (self: &Self, _a: DeserialiseChord, buffer: 'filestr) {} {
         "\nmode \"";
             DeserialiseHotkey(TITLE_DELIM, self.title).len(TITLE_CONSTANTS) =>
                 DeserialiseHotkey(TITLE_DELIM, self.title).push_into(TITLE_CONSTANTS, buffer);
@@ -97,7 +97,7 @@ impl<'filestr, 'b, 'owner> PreallocPush<'filestr, DeserialiseChord>
 
 pub struct Wrapper();
 impl<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>> for Wrapper {
-    sidebyside_len_and_push!(len, push_into, self: &Self, shortcut_owner: &ShortcutOwner<'a>, buffer: 'a {
+    sidebyside_len_and_push!(len, push_into (self: &Self, shortcut_owner: &ShortcutOwner<'a>, buffer: 'a) {
         let owner = process(shortcut_owner);
         let mut iter = owner.to_iter();
         let modeless = iter.next().expect("DEV: We always expect `title: []` to exist");

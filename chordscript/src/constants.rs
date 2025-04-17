@@ -98,6 +98,14 @@ build_available_keys! {
     };
 }
 
+
+#[test]
+fn asdf() {
+    println!("{:?}", AVAILABLE_KEYS);
+}
+
+
+
 #[cfg(test)]
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;

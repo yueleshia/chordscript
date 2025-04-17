@@ -38,6 +38,7 @@ macro_rules! array_index_by_enum {
 
 mod shellscript;
 mod i3_shell;
+mod debug_shortcuts;
 
 array_index_by_enum! {
     pub enum Templates
@@ -47,22 +48,23 @@ array_index_by_enum! {
     = {
         ShellScript => "shell" => &shellscript::Wrapper(),
         I3Shell =>  "i3" => &i3_shell::Wrapper(),
+        DebugShortcuts =>  "debug-shortcuts" => &debug_shortcuts::Wrapper(),
     };
 }
 
-#[test]
-fn asdf() {
-    use crate::parser;
-    use std::io::stdout;
-    let me = include_str!(concat!(env!("HOME"), "/.config/rc/wm-shortcuts"));
-    //print("|{}|", me);
-    let _lock = &mut stdout();
-
-    let ast = &parser::parse_to_shortcuts(me).unwrap();
-    Templates::ShellScript
-        .pipe(ast, _lock)
-        .expect("unreachable");
-}
+//#[test]
+//fn asdf() {
+//    use crate::parser;
+//    use std::io::stdout;
+//    let me = include_str!(concat!(env!("HOME"), "/.config/rc/wm-shortcuts"));
+//    //print("|{}|", me);
+//    let _lock = &mut stdout();
+//
+//    let ast = &parser::parse_to_shortcuts(me).unwrap();
+//    Templates::ShellScript
+//        .pipe(ast, _lock)
+//        .expect("unreachable");
+//}
 
 impl<'filestr, 'b> PreallocPush<'filestr, &'b ShortcutOwner<'filestr>> for Templates {
     fn len(&self, owner: &'b ShortcutOwner<'filestr>) -> usize {
@@ -108,7 +110,7 @@ pub struct DeserialiseChord {
 }
 
 impl InnerChord {
-    sidebyside_len_and_push!(! const ! len, push_into<'a>, self: &Self, extra: DeserialiseChord, buffer: 'a {} {
+    sidebyside_len_and_push!(! const ! len, push_into<'a> (self: &Self, extra: DeserialiseChord, buffer: 'a) {} {
         // At most `mod_to_str.len()` modifiers will be added
         extra.mod_to_str.len() * 2 => {
             let mut delim = "";

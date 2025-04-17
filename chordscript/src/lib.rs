@@ -27,18 +27,17 @@ fn on_file() {
     let _lexemes = lexemes::lex(&file).unwrap();
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
     //println!("\n~~~~~~\n");
-    let _parseme_owner = shortcuts::parse_unsorted(_lexemes).unwrap();
-    //println!("{}", deserialise::ListAll(&_parseme_owner).to_string_custom());
-    let _shortcuts = _parseme_owner.to_iter().collect::<Vec<_>>();
+    let _shortcuts = shortcuts::parse_unsorted(_lexemes).unwrap();
 
     // I should not use len() check with externally defined file, but it is
     // the quickest check to see if we altered the algorithm significantly
-    println!("~~~~\n{}", _shortcuts.len());
-    debug_assert_eq!(_shortcuts.len(), 106);
-    //deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
-    //deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
-    //println!("~~~~");
-    //let _keyspaces = keyspace::process(&_parseme_owner);
+    println!("~~~~\n{}", _shortcuts.to_iter().count());
+    let mut lock = std::io::stdout();
+    templates::Templates::DebugShortcuts
+        .pipe(&_shortcuts, &mut lock)
+        .expect("unreachable");
+    println!("~~~~");
+    //let _keyspaces = keyspace::process(&_shortcuts);
     //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
 }
 

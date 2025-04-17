@@ -133,17 +133,21 @@ macro_rules! precalculate_capacity_and_build {
 // A way specify length of what is pushed and do the pushing side-by-side
 #[macro_export]
 macro_rules! sidebyside_len_and_push {
-    ($(! $( $prefix:ident )+ !)? $len:ident $(<$len_lt:lifetime>)?, $push_into:ident $(<$push_lt:lifetime>)?,
-        $self:ident : $ty1:ty, $extra:ident : $ty2:ty, $buffer:ident: $filestr:lifetime {
-        $( $init:stmt; )*
-    } {
-        $( $stmts:tt )*
-    }) => {
-        $( $( $prefix )* )? fn $len $(<$len_lt>)? ($self: $ty1, $extra: $ty2) -> usize {
+    (
+        $(! $( $prefix:ident )+ !)? $len:ident $(<$( $len_lt:lifetime ),*>)?,
+        $push_into:ident $(<$($push_lt:lifetime),*>)?
+            ($self:ident : $ty1:ty, $extra:ident : $ty2:ty, $buffer:ident: $filestr:lifetime)
+        {
+            $( $init:stmt; )*
+        } {
+            $( $stmts:tt )*
+        }
+    ) => {
+        $( $( $prefix )* )? fn $len $(<$($len_lt),*>)? ($self: $ty1, $extra: $ty2) -> usize {
             $( $init )*
             sidebyside_len_and_push!(@size $($stmts)*)
         }
-        fn $push_into $(<$push_lt>)? ($self: $ty1, $extra: $ty2, $buffer: &mut Vec<&$filestr str>) {
+        fn $push_into $(<$($push_lt),*>)? ($self: $ty1, $extra: $ty2, $buffer: &mut Vec<&$filestr str>) {
             //#[cfg(debug_assertions)]
             //debug_assert!({ $this.to_string_custom(); true });
             $( $init )*

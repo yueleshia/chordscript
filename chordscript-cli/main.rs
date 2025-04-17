@@ -97,7 +97,9 @@ fn main() {
                 let lock = &mut std::io::stdout();
 
                 match runner {
-                    Ok(Runner::Native(format @ Templates::ShellScript)) => format.pipe(&ast, lock).unwrap(),
+                    Ok(Runner::Native(format @ Templates::ShellScript)
+                        | Runner::Native(format @ Templates::DebugShortcuts)
+                    ) => format.pipe(&ast, lock).unwrap(),
                     Ok(Runner::Shell{ format, runner: _ }) => format.pipe(&ast, lock).unwrap(),
                     Ok(a) => todo!("{:?}", a),
                     Err(framework) => {
