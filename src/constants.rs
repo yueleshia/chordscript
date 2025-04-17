@@ -2,6 +2,21 @@
 
 use crate::map;
 
+macro_rules! build_slice_and_joined_str {
+    (pub const $str:ident: &str = $slice:ident: $slicety:ty =
+        [$($val:literal, )* ];
+    ) => {
+        pub const $str: &str = concat!("", $($val, ' ',)*);
+        pub const $slice: $slicety = [$($val,)*];
+    };
+}
+
+build_slice_and_joined_str!(
+    pub const VALID_ESCAPEE_STR: &str = VALID_ESCAPEES: [&str; 5] =
+        // NOTE: Do not forget final comma
+        ["\\", "|", ",", "n", "\\n",];
+);
+
 // https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
 // These contain no semantic meaning in head
 pub const WHITESPACE: [char; 25] = [
@@ -47,7 +62,6 @@ macro_rules! build_available_keys {
         concat!($first, $(" ", $val, )*)
     };
 }
-
 
 // Following the naming conventions of xev for the keys
 build_available_keys! {
