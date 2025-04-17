@@ -5,7 +5,7 @@ use crate::errors::lexer as errors;
 use crate::reporter::MarkupError;
 use crate::structs::Cursor;
 
-use std::mem::{replace, swap};
+use std::mem::swap;
 
 // For escaping during the lexer phase, State::BEscape
 // We introduce a new value with "\n" not in the original text.
@@ -62,7 +62,6 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
         old_state: State::Head,
 
         entry_stats: Vec::with_capacity(entry_estimate),
-        fragment_len: 0,
         entry_head_index: 0,
         entry_body_index: 0,
         member_num: 0,        // index for HChoice/BChoice (to `filter()` on in parser)
@@ -75,17 +74,17 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
     // Start lexing
     step_init(&mut fsm)?;
     while let Some(ch) = fsm.walker.next() {
+        let len = fragments.len();
         let maybe_push = match fsm.state {
-            State::Head => step_head_placeholder(&mut fsm, ch),
-            State::HBrackets => step_h_brackets(&mut fsm, ch),
-            State::Body => step_body(&mut fsm, ch),
-            State::BBrackets => step_b_brackets(&mut fsm, ch),
-            State::BEscape => step_b_escape(&mut fsm, ch),
+            State::Head => step_head_placeholder(&mut fsm, ch, len),
+            State::HBrackets => step_h_brackets(&mut fsm, ch, len),
+            State::Body => step_body(&mut fsm, ch, len),
+            State::BBrackets => step_b_brackets(&mut fsm, ch, len),
+            State::BEscape => step_b_escape(&mut fsm, ch, len),
         }?;
         if let Some(item) = maybe_push {
             fragments.push(item);
         }
-        debug_assert_eq!(fragments.len(), fsm.fragment_len);
     }
 
     // The while loop ends before last lexeme in the body is pushed
@@ -95,7 +94,7 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
                 fragments.push(lexeme)
             }
             // True/false does not matter here
-            fsm.calculate_entry_size(false); // @VOLATILE: After `emit_body()`
+            fsm.push_entry(false, fragments.len());
             Ok(None)
         }
         State::Head if fsm.is_placeholder => fsm
@@ -107,7 +106,6 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
             .error_at_current(errors::END_BEFORE_BRACKET_CLOSE),
     }?;
 
-    debug_assert_eq!(fragments.len(), fsm.fragment_len);
     //fragments.iter().for_each(|lexeme| println!("- {:?}", lexeme));
 
     Ok(LexOutput {
@@ -136,11 +134,11 @@ struct Fsm<'a> {
     original: &'a str,
     is_placeholder: bool,
     state: State,
+    // This is more useful when we have more states
     old_state: State,
 
     // See second impl block for explanation of the math
     entry_stats: Vec<PostLexEntry>,
-    fragment_len: usize, // Number of lexemes we have emitted
     entry_head_index: usize,
     entry_body_index: usize,
     member_num: usize,
@@ -160,12 +158,9 @@ fn step_init<'a>(fsm: &mut Fsm<'a>) -> StepOutput<'a> {
         match (fsm.walker.curr_char, peek) {
             ('\n', '#') => fsm.walker.eat_till_newline(),
             ('\n', c @ '|' | c @ '!') => {
-                fsm.walker.next(); // skip newline (and '|' after break)
-
-                // These are set by default
-                //fsm.change_state(State::Head);
-                fsm.is_placeholder = c == '!';
                 debug_assert!(matches!(fsm.state, State::Head));
+                fsm.walker.next(); // skip newline (and '|' after break)
+                fsm.is_placeholder = c == '!';
                 break;
             }
 
@@ -179,7 +174,7 @@ fn step_init<'a>(fsm: &mut Fsm<'a>) -> StepOutput<'a> {
     Ok(None)
 }
 
-fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
+fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char, lexeme_count: usize) -> StepOutput<'a> {
     debug_assert!(!SEPARATOR.contains(&'!'));
     debug_assert!(!SEPARATOR.contains(&'|'));
 
@@ -192,7 +187,7 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
         }
 
         ('{', Some('{')) => {
-            fsm.change_state(State::HBrackets);
+            fsm.change_state(State::Head, State::HBrackets);
 
             let before_bracket = fsm.cursor.move_to(fsm.walker.prev);
             fsm.walker.next(); // Skip second '{'
@@ -221,27 +216,38 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
          * Head- and placeholder-specific code
          *************************************/
         ('|', _) if !fsm.is_placeholder => {
-            fsm.change_state(State::Body);
+            fsm.change_state(State::Head, State::Body);
 
             // Change to State::Body
             // i.e. cursor is pointing at the bar
             debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let bar = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[bar]);
-            fsm.mark_body_start()?; // @VOLATILE: Before `emit_h_chord()`
+            fsm.mark_body_start(lexeme_count + if let Ok(None) = lexeme {
+                unreachable!("Changed the `emit_h_chord()` behaviour?")
+            } else {
+                1
+            })?;
             lexeme
         }
 
         ('!', _) if !fsm.is_placeholder => fsm.walker.error_at_current(errors::EXCLAIM_IN_HEAD),
         ('!', _) => {
-            fsm.change_state(State::Body);
+            fsm.change_state(State::Head, State::Body);
 
             // Change to State::Body
             // i.e. cursor is pointing at the exclamation
             debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let exclaim = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[exclaim]);
-            fsm.mark_body_start()?; // @VOLATILE: after `emit_h_chord()`
+            fsm.mark_body_start(
+                lexeme_count
+                    + if let Ok(None) = lexeme {
+                        unreachable!("Changed the `emit_h_chord()` behaviour?")
+                    } else {
+                        1
+                    },
+            )?;
             lexeme
         }
         ('|', _) => fsm.walker.error_at_current(errors::BAR_IN_PLACEHOLDER),
@@ -258,7 +264,7 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
 }
 
 #[inline]
-fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
+fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char, lexeme_count: usize) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         ('\n', Some('#')) => {
             let before_newline = fsm.cursor.span_to(fsm.walker.prev);
@@ -277,7 +283,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             lexeme
         }
         ('}', Some('}')) => {
-            fsm.revert_state();
+            fsm.change_state(State::HBrackets, State::Head);
 
             let before_bracket = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.next(); // Skip second '}'
@@ -316,7 +322,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
 }
 
 #[inline]
-fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
+fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char, lexeme_count: usize) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         // Note: Single '{' is not an error, thus doing a different match
         ('\n', Some('#')) => {
@@ -327,7 +333,7 @@ fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
         }
 
         ('{', Some('{')) => {
-            fsm.change_state(State::BBrackets);
+            fsm.change_state(State::Body, State::BBrackets);
 
             let before_brackets = fsm.cursor.move_to(fsm.walker.prev);
             fsm.walker.next(); // Skip second '{'
@@ -337,14 +343,18 @@ fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
         }
 
         ('\n', Some(c @ '|') | Some(c @ '!')) => {
-            fsm.change_state(State::Head);
+            fsm.change_state(State::Body, State::Head);
 
             // Final newlines will be trimmed at parser stage anyway
             let before_newline = fsm.cursor.move_to(fsm.walker.prev);
             let lexeme = fsm.emit_body(&fsm.original[before_newline]);
             fsm.walker.next(); // Skip '|' or '!'
             fsm.cursor.move_to(fsm.walker.post);
-            fsm.calculate_entry_size(c == '!'); // @VOLATILE: After `emit_body()`
+            fsm.push_entry(c == '!', lexeme_count + if let Ok(None) = lexeme {
+                0
+            } else {
+                1
+            });
             lexeme
         }
 
@@ -353,7 +363,7 @@ fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
 }
 
 #[inline]
-fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
+fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char, lexeme_count: usize) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         ('\n', Some('#')) => {
             let before_newline = fsm.cursor.move_to(fsm.walker.post);
@@ -363,9 +373,10 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
         }
 
         ('\\', _) => {
+            fsm.change_state(State::BBrackets, State::BEscape);
+
             let before_backslash = fsm.cursor.move_to(fsm.walker.prev);
             fsm.cursor.move_to(fsm.walker.post);
-            fsm.change_state(State::BEscape);
             fsm.emit_b_choice(&fsm.original[before_backslash])
         }
 
@@ -374,7 +385,8 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             .error_at_current(errors::BODY_BRACKET_NO_NEWLINE_BAR),
         (',', _) => {
             let before_comma = fsm.cursor.span_to(fsm.walker.prev);
-            let frag = fsm.emit_b_member(&fsm.original[before_comma]);
+            // was 'emite_b_member()'
+            let frag = fsm.emit_b_choice(&fsm.original[before_comma]);
             fsm.cursor.move_to(fsm.walker.post); // After ','
             fsm.member_num += 1; // @VOLATILE: ensure this is after emit
 
@@ -386,9 +398,10 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             }
         }
         ('}', Some('}')) => {
+            fsm.change_state(State::BBrackets, State::Body);
+
             let before_bracket = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.next(); // Skip the second '}'
-            fsm.change_state(State::Body);
             fsm.max_permutes.1 = fsm.max_permutes.1.max(fsm.member_num + 1);
             fsm.cursor.move_to(fsm.walker.post); // After '}'
 
@@ -396,7 +409,8 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
                 fsm.walker
                     .error_at_current(errors::MORE_BODY_THAN_HEAD_PERMUTATIONS)
             } else {
-                fsm.emit_b_member(&fsm.original[before_bracket])
+            // was 'emite_b_member()'
+                fsm.emit_b_choice(&fsm.original[before_bracket])
             }
         }
         ('{', Some('{')) => fsm
@@ -407,13 +421,13 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
 }
 
 macro_rules! match_and_build_escapes {
-    ($fn:ident ($fsm:ident) {
+    ($fn:ident ($fsm:ident, $lexeme_count:ident) {
         $( $($char:literal )|* => $do:expr,)*
         _ => $final:expr,
     }) => {
         #[inline]
-        fn $fn<'a>($fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
-            $fsm.revert_state();
+        fn $fn<'a>($fsm: &mut Fsm<'a>, ch: char, $lexeme_count: usize) -> StepOutput<'a> {
+            swap(&mut $fsm.state, &mut $fsm.old_state);
             match ch {
                 $( $($char)|* => $do )*
                 _ => $final
@@ -443,7 +457,7 @@ macro_rules! match_and_build_escapes {
 }
 
 match_and_build_escapes! {
-    step_b_escape(fsm) {
+    step_b_escape(fsm, lexeme_count) {
         '\\' | '|' | ',' => {
             let after_escaped = fsm.cursor.move_to(fsm.walker.post);
             fsm.emit_b_choice(&fsm.original[after_escaped])
@@ -466,10 +480,16 @@ match_and_build_escapes! {
 }
 
 impl<'a> Fsm<'a> {
+    // Including 'from_state' and 'into_state' so that when we inline, the
+    // match statements will be optimised out
+    //
+    // TODO: Return fragment_len
     #[inline]
-    fn change_state(&mut self, target_state: State) {
+    fn change_state(&mut self, from_state: State, into_state: State) {
+        debug_assert!(matches!(&self.state, from_state));
+
         #[cfg(debug_assertions)]
-        match (&self.state, &target_state) {
+        match (&from_state, &into_state) {
             (State::Head, State::Body | State::HBrackets) => {}
             (State::Body | State::HBrackets, State::Head) => {}
             (State::Body, State::BBrackets) => {}
@@ -485,12 +505,8 @@ impl<'a> Fsm<'a> {
             }
         }
 
-        self.old_state = replace(&mut self.state, target_state);
-    }
-
-    #[inline]
-    fn revert_state(&mut self) {
-        swap(&mut self.state, &mut self.old_state);
+        self.old_state = from_state;
+        self.state = into_state;
     }
 }
 
@@ -516,7 +532,6 @@ macro_rules! define_emitter {
             #[inline]
             fn $fn(&mut $self, $frag: &'a str) -> StepOutput<'a> {
                 $(define_emitter!(@$check_empty $frag);)?
-                $self.fragment_len += 1;
                 $expr
             }
         )*
@@ -530,6 +545,7 @@ macro_rules! define_emitter {
     ($frag:ident) => {};
 }
 impl<'a> Fsm<'a> {
+    // All of these increment self.fragment
     define_emitter! {
         // Outside of head/placeholder '{{' and '}}'
         @check_frag_empty emit_head(self, frag)
@@ -551,29 +567,21 @@ impl<'a> Fsm<'a> {
             Ok(Some(Lexeme::ChordDelimHC(self.member_num, frag)))
         }
 
-
-
-
         // Outside of body '{{' and '}}'
         @check_frag_empty emit_body(self, frag) {
             self.body_count.0 += 1;
             Ok(Some(Lexeme::Literal(frag)))
         }
-        // Inside of body '{{' and '}}', when not before ','
+        // Inside of body '{{' and '}}'
         @check_frag_empty emit_b_choice(self, frag) {
-            self.body_count.1 += 1;
-            Ok(Some(Lexeme::BChoice(self.member_num, frag)))
-        }
-        // Inside of body '{{' and '}}', when before ','
-        @check_frag_empty emit_b_member(self, frag) {
             self.body_count.1 += 1;
             Ok(Some(Lexeme::BChoice(self.member_num, frag)))
         }
     }
 
     #[inline]
-    fn mark_body_start(&mut self) -> Output<()> {
-        self.entry_body_index = self.fragment_len;
+    fn mark_body_start(&mut self, lexeme_count: usize) -> Output<()> {
+        self.entry_body_index = lexeme_count;
 
         // + 1 for the 'ChordDelim' for the last '|'/'!'
         if self.entry_head_index + 1 == self.entry_body_index {
@@ -596,7 +604,7 @@ impl<'a> Fsm<'a> {
     }
 
     #[inline]
-    fn calculate_entry_size(&mut self, next_is_placeholder: bool) {
+    fn push_entry(&mut self, next_is_placeholder: bool, lexeme_count: usize) {
         debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
         debug_assert!(self.max_permutes.0 >= self.max_permutes.1);
 
@@ -621,11 +629,12 @@ impl<'a> Fsm<'a> {
             permutations: self.max_permutes.0,
             head: self.entry_head_index,
             body: self.entry_body_index,
-            tail: self.fragment_len,
+            tail: lexeme_count,
         });
+        //println!("{:?}", self.entry_stats.last().unwrap().tail);
 
         self.is_placeholder = next_is_placeholder;
-        self.entry_head_index = self.fragment_len;
+        self.entry_head_index = lexeme_count;
         self.max_permutes = (1, 1);
         self.chord_count = (0, 0);
         self.body_count = (0, 0);
