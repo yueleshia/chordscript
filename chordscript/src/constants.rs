@@ -1,22 +1,67 @@
 //run: cargo test -- --nocapture
 
-use crate::map;
+////////////////////////////////////////////////////////////////////////////////
+// Constants
+////////////////////////////////////////////////////////////////////////////////
 
-macro_rules! build_slice_and_joined_str {
-    (pub const $str:ident: &str = $slice:ident: $slicety:ty =
-        [$($val:literal, )* ];
-    ) => {
-        pub const $str: &str = concat!("", $($val, ' ',)*);
-        #[allow(dead_code)]
-        pub const $slice: $slicety = [$($val,)*];
+use crate::array_index_by_enum;
+
+macro_rules! copy_from_slice {
+    ($base:ident[{ $start:expr }..] = $from:ident) => {
+        assert!($base.len() >= $from.len());
+        let mut i = 0;
+        loop {
+            $base[$start + i] = $from[i];
+            i += 1;
+            if i >= $from.len() {
+                break;
+            }
+        }
     };
 }
 
-build_slice_and_joined_str!(
-    pub const VALID_ESCAPEE_STR: &str = VALID_ESCAPEES: [&str; 5] =
-        // NOTE: Do not forget final comma
-        ["\\", "|", ",", "n", "\\n",];
-);
+macro_rules! const_join_str {
+    (pub const $JOIN:ident: &str = $list:ident | join($raw:ident $len:ident)) => {
+        const $len: usize = {
+            let mut len = 0;
+            let mut i = 0;
+            loop {
+                len += $list[i].len() + 1;
+                i += 1;
+                if i >= $list.len() {
+                    break;
+                }
+            }
+            len - 1
+        };
+
+        const $raw: [u8; $len] = {
+            let mut temp = [' ' as u8; $len];
+            let mut i = 0;
+            let mut len = 0;
+            loop {
+               // len += ALL_KEYS[i].len() + 1;
+                let slice = $list[i].as_bytes();
+                copy_from_slice!(temp[{len}..] = slice);
+                len += $list[i].len() + 1;
+                i += 1;
+                if i < $list.len() {
+                } else {
+                    break;
+                }
+            }
+            temp
+        };
+        pub const $JOIN: &str = unsafe { std::str::from_utf8_unchecked(&$raw) };
+    };
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Constants
+////////////////////////////////////////////////////////////////////////////////
+
+pub const VALID_ESCAPEES: [&str; 5] = ["\\", "|", ",", "n", "\\n"];
+const_join_str!(pub const VALID_ESCAPEE_STR: &str = VALID_ESCAPEES | join(A_RAW A_LEN));
 
 // https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
 // These contain no semantic meaning in head
@@ -29,54 +74,21 @@ pub const WHITESPACE: [char; 25] = [
 
 const SEPARATOR_LEN: usize = WHITESPACE.len() + 1;
 pub const SEPARATOR: [char; SEPARATOR_LEN] = {
-    let base = [' '; SEPARATOR_LEN];
-    let mut base = map!(
-        base: [char; SEPARATOR_LEN]
-        |> i in 0..WHITESPACE.len() => base[i] = WHITESPACE[i]
-    );
-    // Add these
+    let mut base = [' '; SEPARATOR_LEN];
+    copy_from_slice!(base[{0}..] = WHITESPACE);
     base[25] = '+';
     base
 };
 
-// The only other way I can think of building 'AVAILABLE_KEYS' without using
-// a macro is #![feature(const_str_from_utf8_unchecked)]
-// See: https://github.com/rust-lang/rust/issues/75196
-macro_rules! build_available_keys {
-    ($( pub const $var:ident : $type:ty, $Enum:ident = {
-        $($Variant:ident => $val:literal, )*
-    }; )*) => {
-        $(
-            pub const $var: $type = [$( $val, )*];
-
-            // Enum for remapping buttons to output strings
-            #[allow(dead_code)]
-            #[repr(usize)]
-            pub enum $Enum {
-                $( $Variant, )*
-            }
-
-            impl $Enum {
-                #[allow(dead_code)]
-                pub const fn id(&self) -> usize {
-                    unsafe { *(self as *const Self as *const usize) }
-                }
-            }
-        )*
-        pub const AVAILABLE_KEYS: &str =
-            build_available_keys!(@join $( $( $val, )* )*);
-    };
-    (@join $first:literal, $( $val:literal, )*) => {
-        concat!($first, $(" ", $val, )*)
-    };
-}
 
 // Following the naming conventions of xev for the keys
-build_available_keys! {
-    pub const MODIFIERS: [&str; 4], Modifiers = {
+array_index_by_enum! { MODIFIER_COUNT: usize
+    pub enum Modifiers {
         Alt => "alt", Ctrl => "ctrl", Shift => "shift", Super => "super",
-    };
-    pub const KEYCODES: [&str; 50], Keycodes = {
+    } => 1 pub const MODIFIERS: [&str]
+}
+array_index_by_enum! { KEYCODE_COUNT: usize
+    pub enum Keycodes {
         Comma => ",",
         Period => ".",
         Zero => "0", One => "1", Two => "2", Thre => "3", Four => "4",
@@ -95,34 +107,33 @@ build_available_keys! {
         Semicolon => "semicolon",
         XF86MonBrightnessUp => "XF86MonBrightnessUp",
         XF86MonBrightnessDown => "XF86MonBrightnessDown",
-    };
+    } => 1 pub const KEYCODES: [&str]
 }
-
-
-#[test]
-fn asdf() {
-    println!("{:?}", AVAILABLE_KEYS);
-}
+const ALL_KEYS: [&str; MODIFIERS.len() + KEYCODES.len()] = {
+    let mut base = [""; MODIFIERS.len() + KEYCODES.len()];
+    copy_from_slice!(base[{0}..] = MODIFIERS);
+    copy_from_slice!(base[{MODIFIERS.len()}..] = KEYCODES);
+    base
+};
+// Join ALL_KEYS for printing an error message
+const_join_str!(pub const AVAILABLE_KEYS: &str = ALL_KEYS | join(JOIN_RAW JOIN_LEN));
 
 
 
 #[cfg(test)]
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
-    let max_len = 0;
-    let max_len = map!(
-        max_len: usize
-        |> i in 0..KEYCODES.len()
-        => if KEYCODES[i].len() > max_len {
-            max_len = KEYCODES[i].len()
+    let mut max_len = 0;
+    let mut i = 0;
+    loop {
+        if max_len < ALL_KEYS[i].len() {
+            max_len = ALL_KEYS[i].len();
         }
-    );
-    map!(
-        max_len: usize
-        |> i in 0..MODIFIERS.len()
-        => if MODIFIERS[i].len() > max_len {
-            max_len = MODIFIERS[i].len()
+        i += 1;
+        if i >= ALL_KEYS.len() {
+            break;
         }
-    )
+    }
+    max_len
 };
 
 // Many tests to check for human input error

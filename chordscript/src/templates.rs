@@ -5,52 +5,33 @@ use crate::parser::shortcuts::ShortcutOwner;
 use crate::structs::{Chord, InnerChord};
 use std::io::{Result as IoResult, Write};
 
-use crate::sidebyside_len_and_push;
-
-// @TODO: Constants can probably use this
-macro_rules! array_index_by_enum {
-    (
-        pub enum $Enum:ident
-        => pub const $REVERSE:ident : [$rev:ty]
-        => pub const $ARRAY:ident : [$ty1:ty]
-        => const $ARRAY2:ident : [$ty2:ty]
-        = {
-            $($Variant:ident => $val:literal => $val2:expr, )*
-        };
-    ) => {
-        #[derive(Debug)]
-        #[repr(usize)]
-        pub enum $Enum {
-            $( $Variant, )*
-        }
-        impl $Enum {
-            #[allow(dead_code)]
-            pub const fn id(&self) -> usize {
-                unsafe { *(self as *const Self as *const usize) }
-            }
-        }
-
-        pub const $REVERSE: [$rev; 0 $(+ { let _ = $Enum::$Variant;  1 })*] = [$( $Enum::$Variant, )*];
-        pub const $ARRAY:   [$ty1; $REVERSE.len()] = [$( $val, )*];
-        const $ARRAY2:      [$ty2; $REVERSE.len()] = [$( $val2, )*];
-    };
-}
+use crate::{sidebyside_len_and_push, array_index_by_enum};
 
 mod shellscript;
 mod i3_shell;
 mod debug_shortcuts;
 
-array_index_by_enum! {
-    pub enum Templates
-    => pub const ID_TO_TEMPLATE: [Templates]
-    => pub const ID_TO_STR: [&str]
-    => const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
-    = {
-        ShellScript => "shell" => &shellscript::Wrapper(),
-        I3Shell =>  "i3" => &i3_shell::Wrapper(),
-        DebugShortcuts =>  "debug-shortcuts" => &debug_shortcuts::Wrapper(),
-    };
+array_index_by_enum! { TEMPLATE_COUNT: usize
+    pub enum Templates {
+        ShellScript    => Templates::ShellScript    => "shell"           => &shellscript::Wrapper(),
+        I3Shell        => Templates::I3Shell        => "i3"              => &i3_shell::Wrapper(),
+        DebugShortcuts => Templates::DebugShortcuts => "debug-shortcuts" => &debug_shortcuts::Wrapper(),
+    }
+    => 1 pub const ID_TO_TEMPLATE: [Templates]
+    => 2 pub const ID_TO_STR: [&str]
+    => 3 pub const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
 }
+//array_index_by_enum! {
+//    pub enum Templates
+//    => pub const ID_TO_TEMPLATE: [Templates]
+//    => pub const ID_TO_STR: [&str]
+//    => const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
+//    = {
+//        ShellScript => "shell" => &shellscript::Wrapper(),
+//        I3Shell =>  "i3" => &i3_shell::Wrapper(),
+//        DebugShortcuts =>  "debug-shortcuts" => &debug_shortcuts::Wrapper(),
+//    };
+//}
 
 //#[test]
 //fn asdf() {
