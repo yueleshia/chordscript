@@ -1,5 +1,5 @@
 // The third phase of compilation
-//run: cargo test -- --nocapture
+// run: cargo test -- --nocapture
 
 use std::cmp;
 use std::mem;
@@ -85,8 +85,6 @@ pub fn process<'parsemes, 'filestr>(
     shortcut_owner: &'parsemes ShortcutOwner<'filestr>,
 ) -> KeyspaceOwner<'parsemes, 'filestr> {
     let view = shortcut_owner.make_owned_sorted_view();
-
-    //let hotkeys: &[Hotkey] = &view;
     let shortcut_len = view.len();
     let max_depth = view
         .iter()
@@ -98,13 +96,16 @@ pub fn process<'parsemes, 'filestr>(
     let (keyspace_capacity, action_capacity) = {
         let mut capacity = (0, 0);
         for col in 0..max_depth {
+            into_partitions.clear();
+            let mut partitions_cursor = Cursor(0);
             for base in to_process_list.iter() {
                 partition_by_col_into(col, base, into_partitions);
-                capacity.1 += into_partitions.len();
-                if !into_partitions.is_empty() {
+                let range = partitions_cursor.move_to(into_partitions.len());
+                if !into_partitions[range].is_empty() {
                     capacity.0 += 1;
                 }
             }
+            capacity.1 += into_partitions.len();
             mem::swap(to_process_list, into_partitions);
         }
         capacity
@@ -113,30 +114,38 @@ pub fn process<'parsemes, 'filestr>(
     let owner = {
         let mut keyspaces = Vec::with_capacity(keyspace_capacity);
         let mut all_actions = Vec::with_capacity(action_capacity);
-        let mut cursor = Cursor(0);
+        let mut action_cursor = Cursor(0);
         to_process_list.clear();
         to_process_list.push(&view[..]);
 
+
+        //println!("{:?}", deserialise);
         for col in 0..max_depth {
+            into_partitions.clear();
+            let mut partitions_cursor = Cursor(0);
             for base in to_process_list.iter() {
                 partition_by_col_into(col, base, into_partitions);
-                into_partitions
-                    .iter()
-                    .for_each(|partition| all_actions.push(partition_to_action(col, partition)));
+                let range = partitions_cursor.move_to(into_partitions.len());
+                let base_partitions = &into_partitions[range];
+                for partition in base_partitions.iter() {
+                    all_actions.push(partition_to_action(col, partition));
+                }
 
                 // If previous iteration only push a Action::Command, then 'base'
                 // is partitioned into null (not pushed to 'all_actions')
-                if !into_partitions.is_empty() {
+                if !base_partitions.is_empty() {
                     // Pre-calculating 'max_depth' ensures >= one partition every 'col'
                     keyspaces.push(KeyspaceRef {
                         title: &base[0].hotkey[0..col],
-                        actions: cursor.move_to(all_actions.len()),
+                        actions: action_cursor.move_to(all_actions.len()),
                     });
                 }
             }
 
             mem::swap(to_process_list, into_partitions);
         }
+
+        //run: cargo run keyspaces -c $HOME/interim/hk/config.txt
         debug_assert_eq!(shortcut_len, to_process_list.capacity());
         debug_assert_eq!(shortcut_len, into_partitions.capacity());
         debug_assert_eq!(keyspace_capacity, keyspaces.len());
@@ -149,9 +158,6 @@ pub fn process<'parsemes, 'filestr>(
     };
     owner
 }
-
-//#[test]
-//fn hello() {}
 
 /****************************************************************************
  * Control flow
@@ -174,7 +180,6 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
     input: &'a [Shortcut<'owner, 'filestr>],
     into_store: &mut Vec<&'a [Shortcut<'owner, 'filestr>]>,
 ) {
-    into_store.clear();
     let first = input
         .iter()
         .enumerate()
