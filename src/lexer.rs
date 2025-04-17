@@ -227,7 +227,7 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let bar = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[bar]);
-            fsm.mark_body_start(); // @VOLATILE: After `emit_h_chord()`
+            fsm.mark_body_start()?; // @VOLATILE: Before `emit_h_chord()`
             lexeme
         }
 
@@ -240,7 +240,7 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
             debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let exclaim = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[exclaim]);
-            fsm.mark_body_start(); // @VOLATILE: after `emit_p_chord()`
+            fsm.mark_body_start()?; // @VOLATILE: after `emit_h_chord()`
             lexeme
         }
         ('|', _) => fsm.walker.error_at_current(errors::BAR_IN_PLACEHOLDER),
@@ -569,8 +569,23 @@ impl<'a> Fsm<'a> {
     }
 
     #[inline]
-    fn mark_body_start(&mut self) {
+    fn mark_body_start(&mut self) -> Output<()> {
         self.entry_body_index = self.fragment_len;
+
+        // + 1 for the 'ChordDelim' for the last '|'/'!'
+        if self.entry_head_index + 1 == self.entry_body_index {
+            // I assume 'self.walker' is pointing just past the '|'/'!'
+            let before_bar = self.walker.prev;
+            let including_bar = self.walker.post;
+            let till_bar = &self.original[0..before_bar];
+            let first_bar = till_bar.rfind(self.walker.curr_char).unwrap();
+            let bar_to_bar = &self.original[first_bar..including_bar];
+
+            // TODO: change this into a two pointers?
+            Err(MarkupError::from_str(self.original, bar_to_bar, errors::EMPTY_HOTKEY.to_string()))
+        } else {
+            Ok(())
+        }
     }
 
     #[inline]

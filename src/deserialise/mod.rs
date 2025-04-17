@@ -1,3 +1,6 @@
+//run: cargo test -- --nocapture
+// run: cargo run -- shortcuts -c $HOME/interim/hk/config.txt
+
 // Following the theme of this entire project, we calculating the exact
 // memory required for printing to save on allocations instead of implementing
 // '.to_string()' (i.e. impl std::fmt::Display).
@@ -30,7 +33,6 @@ use std::cmp;
 use crate::precalculate_capacity_and_build;
 use crate::structs::{Chord, Cursor, WithSpan};
 
-//run: cargo run -- shortcuts -c $HOME/interim/hk/config.txt
 
 /****************************************************************************
  * Print trait
@@ -45,6 +47,26 @@ pub trait Print {
 
     //#[cfg(debug_assertions)]
     fn to_string_custom(&self) -> String;
+}
+
+
+pub trait PrintError<T> {
+    fn or_die(self, exit_code: i32) -> T;
+}
+
+impl<T, E: Print> PrintError<T> for Result<T, E> {
+    fn or_die(self, exit_code: i32) -> T {
+        match self {
+            Ok(x) => x,
+            Err(err) => {
+                let mut msg = String::with_capacity(err.string_len());
+                err.push_string_into(&mut msg);
+
+                eprintln!("{}", msg);
+                std::process::exit(exit_code)
+            }
+        }
+    }
 }
 
 /****************************************************************************

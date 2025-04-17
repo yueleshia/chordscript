@@ -150,12 +150,14 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
  ****************************************************************************/
 #[test]
 fn on_file() {
+    use crate::deserialise::PrintError;
+
     let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
     let file = fs::read_to_string(path).unwrap();
-    let _lexemes = lexer::lex(&file).unwrap();
+    let _lexemes = lexer::lex(&file).or_die(1);
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
-    let _parsemes = parser::parse(_lexemes).unwrap();
-    //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
+    let _parsemes = parser::parse(_lexemes).or_die(1);
+    println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
 }
 #[test]
 fn interpret() {
