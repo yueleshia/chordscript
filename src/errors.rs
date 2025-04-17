@@ -16,6 +16,13 @@ pub const MISSING_RBRACKET: &str =
     "Missing a second closing curly brace. Need '}}' to close an enumeration";
 const_concat!(const HEAD_INVALID_KEY = "Not a valid key\n" => AVAILABLE_KEYS);
 
+pub const PANIC_NON_KEY: &str = "There should only be HeadTypes for chords inside a head choice group";
+pub const PANIC_CHOICE_NON_SECTION: &str = "There should only be BodyType::Section inside a body choice group";
+pub const PANIC_PREV_SEPARATOR_MISSING: &str = "Neither BodyType::ChoiceBegin nor BodyType::ChoiceDelim found before this point";
+pub const PANIC_NEXT_SEPARATOR_MISSING: &str = "Neither BodyType::ChoiceDelim nor BodyType::ChoiceClose found after this point";
+pub const EMPTY_HOTKEY: &str = "You cannot have an empty hotkey. You can comment this out by prefixing with '#' (This makes it part of the previous command and '#' marks comments in shellscript)";
+pub const TOO_MUCH_BODY: &str = "No hotkey is mapped to this permutation. There are too many choices for this command.";
+
 #[test]
 fn const_concat_real_example() {
     assert_eq!(

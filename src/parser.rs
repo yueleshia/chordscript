@@ -1,10 +1,10 @@
 use std::cmp;
-use std::mem;
 use std::ops::Range;
 
 use crate::constants::KEYCODES;
 use crate::define_syntax;
-use crate::lexer::{BodyLexeme, HeadLexeme, Lexeme, LexemeOwner};
+use crate::errors;
+use crate::lexer::{BodyType, HeadType, Lexeme, LexemeOwner};
 use crate::reporter::MarkupError;
 use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
 
@@ -20,6 +20,8 @@ pub struct HotkeyOwner<'filestr> {
     scripts: Vec<&'filestr str>,
 }
 
+type ShortcutView<'owner, 'filestr> = Vec<Shortcut<'owner, 'filestr>>;
+
 // @TODO Add verification for to catch e.g 'a;b' and 'a;b;c' hotkeys
 // Choose this API to meaningfully separate a sorted and original-order view
 // Also keeps the fields in 'HotkeyOwner' private
@@ -33,6 +35,12 @@ impl<'filestr> HotkeyOwner<'filestr> {
         }));
         hotkeys
     }
+
+    pub fn make_owned_sorted_view<'owner>(&'owner self) -> ShortcutView<'owner, 'filestr> {
+        let mut view = self.make_owned_view();
+        view.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+        view
+    }
 }
 
 /****************************************************************************
@@ -41,47 +49,52 @@ impl<'filestr> HotkeyOwner<'filestr> {
 pub fn process<'filestr>(
     lexeme_stream: &'filestr LexemeOwner<'filestr>,
 ) -> Result<HotkeyOwner<'filestr>, MarkupError> {
-    let mut rendered_head_capacity = 0;
-    let mut rendered_body_capacity = 0;
-    let mut hotkey_capacity = 0;
-    let mut partition_max = 0;
-    for lexeme in lexeme_stream.to_iter() {
-        let (head_data, body_data) = parse_lexeme(&lexeme, &mut None, &mut None)?;
+    let (rendered_head_capacity, rendered_body_capacity, hotkey_capacity, partition_max) = {
+        let mut rendered_head_capacity = 0;
+        let mut rendered_body_capacity = 0;
+        let mut hotkey_capacity = 0;
+        let mut partition_max = 0;
+        for lexeme in lexeme_stream.to_iter() {
+            let (head_data, body_data) = parse_lexeme(&lexeme, &mut None, &mut None)?;
 
-        //println!("Sections: {}", head_data.partition_count);
-        //println!("Permutations: {}", head_data.space.permutations);
-        //println!("Space: {}", head_data.space.items);
+            //println!("Sections: {}", head_data.partition_count);
+            //println!("Permutations: {}", head_data.space.permutations);
+            //println!("Space: {}", head_data.space.items);
 
-        rendered_head_capacity += head_data.space.items;
-        rendered_body_capacity += body_data.space.items;
+            rendered_head_capacity += head_data.space.items;
+            rendered_body_capacity += body_data.space.items;
 
-        hotkey_capacity += head_data.space.permutations;
-        partition_max = cmp::max(partition_max, head_data.partition_count);
-        partition_max = cmp::max(partition_max, body_data.partition_count);
+            hotkey_capacity += head_data.space.permutations;
+            partition_max = cmp::max(partition_max, head_data.partition_count);
+            partition_max = cmp::max(partition_max, body_data.partition_count);
 
-        //println!("Body {:?}", body_data.space);
-        //println!("Body {:?}", lexeme.body);
-        assert!(head_data.space.permutations >= body_data.space.permutations);
-        assert!(head_data.space.permutations >= body_data.space.permutations);
-    }
+            //assert!(head_data.space.permutations >= body_data.space.permutations);
+        }
+        (
+            rendered_head_capacity,
+            rendered_body_capacity,
+            hotkey_capacity,
+            partition_max,
+        )
+    };
 
     let parsemes = {
         //let (arrangement, permutations) = &mut Permutations::new(partition_max);
         //permutations.link_to(arrangement);
         let head_generator = &mut Permutations::new(partition_max);
         let body_generator = &mut Permutations::new(partition_max);
-        let mut temp = HotkeyOwner {
+        let mut owner = HotkeyOwner {
             hotkeys: Vec::with_capacity(hotkey_capacity),
             chords: Vec::with_capacity(rendered_head_capacity),
             scripts: Vec::with_capacity(rendered_body_capacity),
         };
-        for hotkey_lexeme in lexeme_stream.to_iter() {
+        for lexeme in lexeme_stream.to_iter() {
             head_generator.reset();
             body_generator.reset();
 
             // Head
             let (head_data, _) = parse_lexeme(
-                &hotkey_lexeme,
+                &lexeme,
                 &mut Some(head_generator),
                 &mut Some(body_generator),
             )?;
@@ -91,32 +104,65 @@ pub fn process<'filestr>(
             for i in 0..arrangement_count {
                 let head = head_generator.generate_arrangement(i);
                 let body = body_generator.generate_arrangement(i);
-                temp.push_arrangement(&hotkey_lexeme, head, body)?;
+                owner.push_arrangement(&lexeme, head, body)?;
             }
-
-            //println!("{:?} {:?}", head_generator, body_generator);
         }
-        // @TODO check capacities match lengths
-        temp
+
+        //debug_assert_eq!(hotkey_capacity, owner.hotkeys.len());
+        //debug_assert_eq!(rendered_body_capacity, owner.chords.len());
+        //debug_assert_eq!(rendered_head_capacity, owner.scripts.len());
+        owner
     };
+
+    verify_no_overlap(&parsemes)?;
 
     Ok(parsemes)
 }
 
+// Verify that all hotkeys are accessible
+// e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
+fn verify_no_overlap(parsemes: &HotkeyOwner) -> Result<(), MarkupError> {
+    let sorted_shortcuts = parsemes.make_owned_sorted_view();
+    let mut iter = sorted_shortcuts.iter().map(|shortcut| shortcut.hotkey);
+
+    if let Some(first) = iter.next() {
+        iter.try_fold(first, |prev_hotkey, curr_hotkey| {
+            let prev_len = prev_hotkey.len();
+            let curr_len = curr_hotkey.len();
+            if curr_len >= prev_len && &curr_hotkey[0..prev_len] == prev_hotkey {
+                //MarkupError::from_span_over(
+                //    first,
+                //    &curr_hotkey[prev_len - 1])
+                //    "The hotkeys overlap with each other".to_string(),
+                //)
+                // @TODO
+                panic!(
+                    "These hotkeys overlap with each other\n{}\n{}",
+                    crate::structs::debug_hotkey_to_string(prev_hotkey),
+                    crate::structs::debug_hotkey_to_string(curr_hotkey),
+                );
+            }
+
+            Ok(curr_hotkey)
+        })?;
+    }
+    Ok(())
+}
+
 define_syntax! {
-    parse | state: State
+    parse_syntax | state: State
         ! metadata: &mut Metadata, index: usize, is_push: &mut Option<&mut Permutations>,
         (lexeme: Either)
     | -> (),
     Loop {
-        Either::H(WithSpan(HeadLexeme::ChordDelim, _, _)) => metadata.partition_width += 1;
-        Either::B(WithSpan(BodyLexeme::Section, _, _)) => metadata.partition_width += 1;
+        Either::H(WithSpan(HeadType::ChordDelim, _, _)) => metadata.partition_width += 1;
+        Either::B(WithSpan(BodyType::Section, _, _)) => metadata.partition_width += 1;
 
-        Either::H(WithSpan(HeadLexeme::ChoiceBegin, _, _))
-        | Either::B(WithSpan(BodyLexeme::ChoiceBegin, _, _)) => {
+        Either::H(WithSpan(HeadType::ChoiceBegin, _, _))
+        | Either::B(WithSpan(BodyType::ChoiceBegin, _, _)) => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(1, index);
-                // Skip HeadLexeme::ChoiceBegin
+                // Skip HeadType::ChoiceBegin
                 generator.cursor.move_to(index + 1);
             }
             metadata.space.calc_space(1, metadata.partition_width);
@@ -126,15 +172,15 @@ define_syntax! {
             metadata.partition_count += 1;
         };
 
-        Either::H(WithSpan(HeadLexeme::ChoiceDelim, _, _))
-        | Either::B(WithSpan(BodyLexeme::ChoiceDelim, _, _)) =>
+        Either::H(WithSpan(HeadType::ChoiceDelim, _, _))
+        | Either::B(WithSpan(BodyType::ChoiceDelim, _, _)) =>
             metadata.choice_count += 1;
 
-        Either::H(WithSpan(HeadLexeme::ChoiceClose, _, _))
-        | Either::B(WithSpan(BodyLexeme::ChoiceClose, _, _))  => {
+        Either::H(WithSpan(HeadType::ChoiceClose, _, _))
+        | Either::B(WithSpan(BodyType::ChoiceClose, _, _))  => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(metadata.choice_count + 1, index);
-                // Skip HeadLexeme::ChoiceClose
+                // Skip HeadType::ChoiceClose
                 generator.cursor.move_to(index + 1);
             }
             metadata.space.calc_space(metadata.choice_count + 1, metadata.partition_width);
@@ -159,81 +205,12 @@ define_syntax! {
     }
 }
 
-//hotkeys: Vec<(Range<usize>, Range<usize>)>,
-//chords: Vec<Chord>,
-//scripts: Vec<&'filestr str>,
-impl<'filestr> HotkeyOwner<'filestr> {
-    fn push_arrangement(
-        &mut self,
-        hotkey_lexeme: &Lexeme<'_, 'filestr>,
-        head_arrangement: (&[usize], &[Range<usize>]),
-        body_arrangement: (&[usize], &[Range<usize>]),
-    ) -> Result<(), MarkupError> {
-        //self.head_arrange
-        debug_assert_eq!(head_arrangement.0.len(), head_arrangement.1.len());
-        debug_assert_eq!(body_arrangement.0.len(), body_arrangement.1.len());
-
-        let (head_begin, body_begin) = (self.chords.len(), self.scripts.len());
-        let mut chord = Chord::new();
-        head_arrangement
-            .1
-            .iter()
-            .map(|range| &hotkey_lexeme.head[range.start..range.end])
-            .zip(head_arrangement.0.iter())
-            .map(|(section, choice)| {
-                section
-                    .split(|l| matches!(l, WithSpan(HeadLexeme::ChoiceDelim, _, _)))
-                    .nth(*choice)
-                    .expect("Unreachable: Head choice index exceeded the current section")
-            })
-            .try_for_each(|key_sequence| {
-                key_sequence.iter().try_for_each(|key| match key {
-                    WithSpan(HeadLexeme::ChordDelim, _, _) => {
-                        self.chords.push(mem::replace(&mut chord, Chord::new()));
-                        Ok(())
-                    }
-                    WithSpan(HeadLexeme::Mod(_), _, _) => chord.add(key),
-                    WithSpan(HeadLexeme::Key(_), _, _) => chord.add(key),
-                    WithSpan(HeadLexeme::Blank, _, _) => Ok(()),
-                    _ => unreachable!("Parser for head failed to catch {:?}", key),
-                })
-            })?;
-        self.chords.push(chord);
-
-        body_arrangement
-            .1
-            .iter()
-            .map(|range| &hotkey_lexeme.body[range.start..range.end])
-            .zip(body_arrangement.0.iter())
-            .map(|(multiple_choice, choice)| {
-                multiple_choice
-                    .split(|l| matches!(l, WithSpan(BodyLexeme::ChoiceDelim, _, _)))
-                    .nth(*choice)
-                    .expect("Unreachable: Head choice index exceeded the current section")
-            })
-            .for_each(|str_sections| {
-                str_sections.iter().for_each(|lexeme| match lexeme {
-                    WithSpan(BodyLexeme::Section, _, _) => self.scripts.push(lexeme.as_str()),
-                    _ => unreachable!("Error on {:?}. Should be processed", lexeme),
-                });
-                //println!("{:?}", str_sections)
-            });
-
-        self.hotkeys.push((
-            head_begin..self.chords.len(),
-            body_begin..self.scripts.len(),
-        ));
-        //println!("{:?}", self.hotkeys);
-        Ok(())
-    }
-}
-
 /****************************************************************************
  * Helpers
  ****************************************************************************/
 enum Either<'a, 'filestr> {
-    H(&'a WithSpan<'filestr, HeadLexeme>),
-    B(&'a WithSpan<'filestr, BodyLexeme>),
+    H(&'a WithSpan<'filestr, HeadType>),
+    B(&'a WithSpan<'filestr, BodyType>),
 }
 
 #[derive(Debug)]
@@ -269,22 +246,21 @@ fn parse_lexeme(
         .iter()
         .enumerate()
         .try_for_each(|(i, head_lexeme)| {
-            let a = parse(
+            parse_syntax(
                 &mut State::Loop,
                 &mut head_data,
                 i,
                 head_generator,
                 Either::H(head_lexeme),
-            );
+            )
             //            println!("Head {:?}", head_data.space);
-            a
         })?;
-    parse(
+    parse_syntax(
         &mut State::End,
         &mut head_data,
         lexeme.head.len(),
         head_generator,
-        Either::H(&WithSpan(HeadLexeme::Blank, "", 0..0)),
+        Either::H(&WithSpan(HeadType::Blank, "", 0..0)),
     )?;
 
     let mut body_data = Metadata::new();
@@ -293,50 +269,194 @@ fn parse_lexeme(
         .iter()
         .enumerate()
         .try_for_each(|(i, body_lexeme)| {
-            let a = parse(
+            parse_syntax(
                 &mut State::Loop,
                 &mut body_data,
                 i,
                 body_generator,
                 Either::B(body_lexeme),
-            );
-            //println!("Loop {:?}", body_data.space);
-            a
+            )?;
+
+            // 'space.permutations' only increases on BodyType::ChoiceClose
+            if body_data.space.permutations > head_data.space.permutations {
+                return Err(choice_count_error(lexeme.body, i));
+            }
+            Ok(())
         })?;
-    parse(
+
+    parse_syntax(
         &mut State::End,
         &mut body_data,
         lexeme.body.len(),
         body_generator,
-        Either::B(&WithSpan(BodyLexeme::Section, "", 0..0)),
+        Either::B(&WithSpan(BodyType::Section, "", 0..0)),
     )?;
-    //println!("head done {:?}", head_data.space);
-    //println!("body done {:?}", body_data.space);
+
     Ok((head_data, body_data))
 }
 
+// Outputs a '(usize, <$source as Iterator>::Item)' with the usize is the index
+// of the found item
+macro_rules! find_prev_from {
+    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
+        $source.iter().enumerate().take($i).rfind(|(_, lexeme)|
+            matches!(*lexeme,
+                WithSpan($search_for, _, _)
+                $( | WithSpan($search_for2, _, _) )*
+            )
+        ).unwrap()
+    };
+}
+macro_rules! find_next_from {
+    ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
+        $source.iter().enumerate().skip($i).find(|(_, lexeme)|
+            matches!(*lexeme,
+                WithSpan($search_for, _, _)
+                $( | WithSpan($search_for2, _, _) )*
+            )
+        ).unwrap()
+    };
+}
+
+
+//hotkeys: Vec<(Range<usize>, Range<usize>)>,
+//chords: Vec<Chord>,
+//scripts: Vec<&'filestr str>,
+impl<'filestr> HotkeyOwner<'filestr> {
+    fn push_arrangement(
+        &mut self,
+        Lexeme { head, body }: &Lexeme<'_, 'filestr>,
+        head_arrangement: (&[usize], &[Range<usize>]),
+        body_arrangement: (&[usize], &[Range<usize>]),
+    ) -> Result<(), MarkupError> {
+        //self.head_arrange
+        debug_assert_eq!(head_arrangement.0.len(), head_arrangement.1.len());
+        debug_assert_eq!(body_arrangement.0.len(), body_arrangement.1.len());
+
+        let (head_begin, body_begin) = (self.chords.len(), self.scripts.len());
+        let last_chord = head_arrangement
+            .1
+            .iter()
+            .map(|range| &head[range.start..range.end])
+            .zip(head_arrangement.0.iter())
+            .map(|(section, choice)| {
+                section
+                    .split(|l| matches!(l, WithSpan(HeadType::ChoiceDelim, _, _)))
+                    .nth(*choice)
+                    .unwrap() // Syntax guarantees 'choice'-th index
+            })
+            .try_fold(Chord::new(), |chord, key_sequence| {
+                key_sequence.iter().try_fold(chord, |c, key| match key {
+                    WithSpan(HeadType::ChordDelim, _, _) => {
+                        self.chords.push(c);
+                        Ok(Chord::new())
+                    }
+                    WithSpan(HeadType::Mod(_), _, _) => c.add(&key),
+                    WithSpan(HeadType::Key(_), _, _) => c.add(&key),
+                    WithSpan(HeadType::Blank, _, _) => Ok(c),
+                    _ => unreachable!("{}", key.to_error(errors::PANIC_NON_KEY)),
+                })
+            })?;
+
+        // If no hotkeys were built
+        if last_chord == Chord::new() {
+            let range = head[0].span_to_as_range(head.last().unwrap());
+            return Err(if head_begin == self.chords.len() {
+                MarkupError::from_range(
+                    head[0].source(),
+                    (range.0 - 1, range.1 + 1), // include bars
+                    errors::EMPTY_HOTKEY.to_string(),
+                )
+            } else {
+                let len = head.len();
+                let (index, _) = find_prev_from!(head, len, HeadType::ChordDelim);
+                MarkupError::from_range(
+                    head[0].source(),
+                    (head[index].2.start, range.1 + 1), // include bars
+                    errors::EMPTY_HOTKEY.to_string(),
+                )
+            });
+        } else {
+            self.chords.push(last_chord);
+        }
+
+        body_arrangement
+            .1
+            .iter()
+            .map(|range| &body[range.start..range.end])
+            .zip(body_arrangement.0.iter())
+            .map(|(multiple_choice, choice)| {
+                multiple_choice
+                    .split(|l| matches!(l, WithSpan(BodyType::ChoiceDelim, _, _)))
+                    .nth(*choice)
+                    .unwrap() // Syntax guarantees 'choice'-th index
+            })
+            .for_each(|str_sections| {
+                str_sections.iter().for_each(|lexeme| match lexeme {
+                    WithSpan(BodyType::Section, _, _) => self.scripts.push(lexeme.as_str()),
+                    _ => unreachable!("{}", lexeme.to_error(errors::PANIC_CHOICE_NON_SECTION)),
+                });
+                //println!("{:?}", str_sections)
+            });
+
+        self.hotkeys.push((
+            head_begin..self.chords.len(),
+            body_begin..self.scripts.len(),
+        ));
+        Ok(())
+    }
+}
+
+// These debug_asserts are guarantees by the syntax
+fn choice_count_error(body: &[WithSpan<BodyType>], i: usize) -> MarkupError {
+    debug_assert!(matches!(body[i],
+        WithSpan(BodyType::ChoiceDelim, _, _)
+            | WithSpan(BodyType::ChoiceClose, _, _)
+    ));
+
+    // BodyType::ChoiceDelim guaranteed to exist because we always start with
+    // one permutation (i.e. choice of one is never an error)
+    let (prev_delim, _) = find_prev_from!(body, i, BodyType::ChoiceDelim);
+    debug_assert!(matches!(
+        body[prev_delim],
+        WithSpan(BodyType::ChoiceDelim, _, _) | WithSpan(BodyType::ChoiceBegin, _, _)
+    ));
+
+    let (brackets, _) = find_next_from!(body, i, BodyType::ChoiceClose);
+    debug_assert!(matches!(
+        body[i],
+        WithSpan(BodyType::ChoiceDelim, _, _) | WithSpan(BodyType::ChoiceClose, _, _)
+    ));
+
+    MarkupError::from_range(
+        body[i].source(),
+        WithSpan::span_to_as_range(&body[prev_delim + 1], &body[brackets - 1]),
+        errors::TOO_MUCH_BODY.to_string(),
+    )
+}
+
 impl Chord {
-    fn add(&mut self, lexeme: &WithSpan<HeadLexeme>) -> Result<(), MarkupError> {
+    fn add(mut self, lexeme: &WithSpan<HeadType>) -> Result<Self, MarkupError> {
         match lexeme {
-            WithSpan(HeadLexeme::Key(k), _, _) => {
+            WithSpan(HeadType::Key(k), _, _) => {
                 if self.key >= KEYCODES.len() {
                     self.key = *k;
-                    Ok(())
+                    Ok(self)
                 } else {
                     Err(lexeme.to_error("Only specify one key per chord"))
                 }
             }
-            WithSpan(HeadLexeme::Mod(m), _, _) => {
+            WithSpan(HeadType::Mod(m), _, _) => {
                 let flag = 1 << *m;
                 if self.modifiers & flag == 0 {
                     self.modifiers |= flag;
-                    Ok(())
+                    Ok(self)
                 } else {
                     Err(lexeme.to_error("Duplicate modifier"))
                 }
             }
             // This is actually
-            _ => unreachable!("Only for HeadLexeme::Key() and HeadLexeme::Mod()"),
+            _ => unreachable!("Only for HeadType::Key() and HeadType::Mod()"),
         }
     }
 }
@@ -414,7 +534,8 @@ impl Permutations {
     fn generate_arrangement(&mut self, index: usize) -> (&[usize], &[Range<usize>]) {
         debug_assert_eq!(self.radices.capacity() + 1, self.weights.capacity());
         debug_assert_eq!(self.arrangement.capacity(), self.radices.capacity());
-        self.radices.iter()
+        self.radices
+            .iter()
             .zip(self.weights.iter())
             .zip(self.arrangement.iter_mut())
             .for_each(|((radix, weight), digit)| *digit = (index / weight) % radix);

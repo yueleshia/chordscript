@@ -19,7 +19,8 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
-use std::{cmp, error, fmt, io, mem};
+use std::{error, fmt, io, mem};
+use crate::structs::WithSpan;
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
@@ -76,129 +77,153 @@ pub struct MarkupError {
 impl error::Error for MarkupError {}
 
 impl MarkupError {
-    pub fn new<'a>(source: &'a str, span: &'a str, message: String) -> Self {
-        let index = index_of_substr(source, span);
-        if span.is_empty() {
-            println!("{}\n===\n{}", span, message);
-            panic!("Cannot report empty errors");
-        }
+    pub fn from_range(source: &str, range: (usize, usize), message: String) -> Self {
         Self {
             source: source.to_string(),
-            range: (index, index + span.len() - 1),
+            range,
+            message,
+        }
+    }
+    pub fn from_str<'a>(context: &'a str, span: &'a str, message: String) -> Self {
+        let index = index_of_substr(context, span);
+        Self {
+            source: context.to_string(),
+            range: (index, index + span.len()),
+            message,
+        }
+    }
+
+    pub fn from_span_over<T>(from: &WithSpan<T>, till_inclusive: &WithSpan<T>, message: String) -> Self {
+        Self {
+            source: from.source().to_string(),
+            range: WithSpan::span_to_as_range(from, till_inclusive),
             message,
         }
     }
 }
 
-fn parse_row_col_of_range(source: &str, range: (usize, usize)) -> (usize, usize, usize, usize) {
-    let seed = (0, 0, range.0, 0, range.1);
-    let (_, r1, c1, r2, c2) = source.lines().fold(seed, |mut acc, line| {
-        let (line_begin, r1, c1, r2, c2) = &mut acc;
+fn convert_to_row_indices(source: &str, range: (usize, usize)) -> (usize, usize, usize, usize) {
+    let (begin, close) = range;
+    assert!(begin <= close, "Range is out of order");
 
-        // Does not matter if line_begin exceeds source
-        // This would happen if source does not end with newline
-        let len = line.len() + '\n'.len_utf8();
-        *line_begin += len;
+    let (_, r0, c0, r1, c1) = source.lines().take(source.lines().count() - 1).fold(
+        (0, 0, begin, 0, close),
+        |(i, r0, c0, r1, c1), line| {
+            let len = line.len(); //+ '\n'.len_utf8();
+            let next_line = i + len + 1;
+            (
+                next_line,
+                if begin >= next_line { r0 + 1 } else { r0 },
+                if begin >= next_line { c0 - len } else { c0 },
+                // At the end, `next_line = source.len() + 1`, so > is fine
+                if close > next_line { r1 + 1 } else { r1 },
+                if close > next_line { c1 - len } else { r1 },
+            )
+        },
+    );
+    (r0, c0, r1, c1)
+}
 
-        if *line_begin < range.0 {
-            *r1 += 1;
-            *c1 = range.0 - *line_begin;
-        }
-        if *line_begin < range.1 {
-            *r2 += 1;
-            *c2 = range.1 - *line_begin;
-        }
-        acc
-    });
-    (r1, c1, r2, c2)
+//#[test]
+//fn hello() {
+//    let example = "asdlkfjaldskf
+//    qwlkejr
+//the cat in the hat is nearly there";
+//    println!();
+//
+//    let len = example.len();
+//    //let substr = &example[len..len+1];
+//    //let index = index_of_substr(example, substr);
+//    let range = (len, len + 10);
+//    //println!("{} {:?}", &example[len - 2..len], &range);
+//    println!(
+//        "{}",
+//        MarkupError::from_range(example, range, "asdf".to_string())
+//    );
+//
+//    println!();
+//}
+
+// 'index' is offset from the beginning of 'line' (might exceed 'line.len()')
+//
+fn line_offset_to_width(context: &str, line: &str, index: usize) -> usize {
+    let base_index = index_of_substr(context, line);
+    let offset = index - base_index;
+    let line_len = line.len();
+    if offset < line_len {
+        line[0..offset].width_cjk()
+    } else {
+        line.width_cjk() + offset - line_len
+    }
 }
 
 // TODO: Delegating print source and rows to error enum `CliError`
 impl fmt::Display for MarkupError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let (r1, c1, r2, c2) = parse_row_col_of_range(&self.source, self.range);
-        let r1_digit_len = count_digits(r1);
-        let row_digit_len = count_digits(r2);
-        let (c1_digit_len, c2_digit_len) = (count_digits(c1), count_digits(c2));
+        let (begin, close) = self.range;
+        let (r0, _, r1, _) = convert_to_row_indices(self.source.as_str(), self.range);
+        let row_digit_len = count_digits(r1 + 1);
 
-        let is_single_line = r1 == r2;
-        let middle_row_count = if is_single_line { 0 } else { r2 - r1 - 1 };
+        let is_single_line = r0 == r1;
+        let row_count = r1 - r0 + 1;
 
-        let begin_line = self.source.lines().nth(r1).unwrap();
-        let close_line = self.source.lines().nth(r2).unwrap();
-        let begin_span_width = {
-            let begin_line_index = index_of_substr(&self.source, begin_line);
-            let span_begin = self.range.0 - begin_line_index;
-            let spaces_width = begin_line[0..span_begin].width_cjk();
-            if is_single_line {
-                (
-                    spaces_width,
-                    self.source[self.range.0..self.range.1].width_cjk(),
-                )
-            } else {
-                (
-                    spaces_width,
-                    begin_line.width_cjk() - spaces_width + '\n'.len_utf8(),
-                )
-            }
-        };
-        let close_span_width = if is_single_line {
-            0
+        let begin_line = self.source.lines().nth(r0).unwrap();
+        let close_line = self.source.lines().nth(r1).unwrap();
+
+        let first_spaces = line_offset_to_width(&self.source, begin_line, begin);
+        let first_marker = if is_single_line {
+            line_offset_to_width(&self.source, begin_line, close) - first_spaces
         } else {
-            let span_close = self.range.1 - index_of_substr(&self.source, close_line);
-            cmp::min(close_line[0..span_close].width_cjk(), DISPLAY_LIMIT)
+            begin_line.width_cjk() - first_spaces + '\n'.len_utf8()
         };
+
+        let after_marker = line_offset_to_width(&self.source, close_line, close);
+        //println!("{:?} {} {}", before_spaces, before_marker, after_marker_width);
 
         let mut buffer: String;
         precalculate_capacity_and_build!(buffer, {
             // Print the filename, row, and col span
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            4 => buffer.push_str("--> ");
-            8 => buffer.push_str("<source>");
-            1 => buffer.push(':');
-            // Rows-col range
-            r1_digit_len => push_num(&mut buffer, count_digits(r1), r1);
-            1 => buffer.push(':');
-            c1_digit_len => push_num(&mut buffer, c1_digit_len, c1);
-            row_digit_len => push_num(&mut buffer, row_digit_len, r1);
-            1 => buffer.push(':');
-            c2_digit_len => push_num(&mut buffer, c2_digit_len, c2);
-            1 => buffer.push('\n');
+            //row_digit_len => pad(&mut buffer, row_digit_len, "");
+            //4 => buffer.push_str("--> ");
+            //8 => buffer.push_str("<source>");
+            //1 => buffer.push(':');
+            //// Rows-col range
+            //r0 => push_num(&mut buffer, count_digits(r0), r0);
+            //1 => buffer.push(':');
+            //c0_digit_len => push_num(&mut buffer, c0_digit_len, c0);
+            //row_digit_len => push_num(&mut buffer, row_digit_len, r0);
+            //1 => buffer.push(':');
+            //c1_digit_len => push_num(&mut buffer, c1_digit_len, c1);
+            //1 => buffer.push('\n');
 
             // Beginning padding for source code
             row_digit_len => pad(&mut buffer, row_digit_len, "");
             3 => buffer.push_str(" |\n");
 
             // Error marker for begin line
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            3 => buffer.push_str(" | ");
-            begin_span_width.0 + begin_span_width.1 * 'v'.len_utf8() => {
-                for _ in 0..begin_span_width.0 {
-                    buffer.push(' ');
-                }
-                for _ in 0..begin_span_width.1 {
-                    buffer.push('v');
-                }
+            if is_single_line { 0 } else {
+                row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
+            } => if !is_single_line {
+                pad(&mut buffer, row_digit_len, "");
+                buffer.push_str(" | ");
+                debug_assert!(" ".width_cjk() == 1);
+                debug_assert!("v".width_cjk() == 1);
+                for _ in 0..first_spaces { buffer.push(' '); }
+                for _ in 0..first_marker { buffer.push('v'); }
+                buffer.push('\n');
             };
-            1 => buffer.push('\n');
-
-            // Print begin line with row numbers
-            row_digit_len => push_num(&mut buffer, row_digit_len, r1);
-            3 => buffer.push_str(" | ");
-            begin_line.len() => buffer.push_str(begin_line);
-            1 => buffer.push('\n');
 
             // Print source with row numbers
             {
                 self.source
                     .lines()
-                    .skip(r1 + 1)
-                    .take(middle_row_count)
+                    .skip(r0)
+                    .take(row_count)
                     .map(|line| row_digit_len + 3 + line.len() + 1)
                     .sum::<usize>()
             } => {
-                let mut row = r1 + 1;
-                for line in self.source.lines().skip(r1 + 1).take(middle_row_count) {
+                let mut row = r0 + 1;
+                for line in self.source.lines().skip(r0).take(row_count) {
                     push_num(&mut buffer, row_digit_len, row);
                     buffer.push_str(" | ");
                     buffer.push_str(line);
@@ -207,22 +232,25 @@ impl fmt::Display for MarkupError {
                 }
             };
 
-            // Print close source with row numbers
-            row_digit_len => push_num(&mut buffer, row_digit_len, r2);
-            3 => buffer.push_str(" | ");
-            if is_single_line { 0 } else { close_line.len() }
-                => if !is_single_line { buffer.push_str(close_line); };
-            1 => buffer.push('\n');
-
             // Error marker for close line
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            3 => buffer.push_str(" | ");
-            close_span_width => {
-                for _ in 0..close_span_width {
-                    buffer.push('^');
-                }
+            if is_single_line {
+                row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
+            } else {
+                row_digit_len + " | ".len() + after_marker + '\n'.len_utf8()
+            } => if is_single_line {
+                pad(&mut buffer, row_digit_len, "");
+                buffer.push_str(" | ");
+                debug_assert!(" ".width_cjk() == 1);
+                debug_assert!("^".width_cjk() == 1);
+                for _ in 0..first_spaces { buffer.push(' '); }
+                for _ in 0..first_marker { buffer.push('^'); }
+                buffer.push('\n');
+            } else {
+                pad(&mut buffer, row_digit_len, "");
+                buffer.push_str(" | ");
+                for _ in 0..after_marker { buffer.push('^'); }
+                buffer.push('\n');
             };
-            1 => buffer.push('\n');
 
             // Closing padding for source code
             row_digit_len => pad(&mut buffer, row_digit_len, "");
@@ -233,13 +261,6 @@ impl fmt::Display for MarkupError {
             3 => buffer.push_str(" = ");
             self.message.len() => buffer.push_str(self.message.as_str());
         });
-        //for line in self.source.lines().skip(r1).take(r2 + 1) {
-        //    println!("{:?}", trim_to_limit(line));
-        //}
-
-        //println!("{:?}", (r1, c1, r2, c2));
-        //println!("{:?}", &self.source.lines().nth(1).unwrap()[19..]);
-        //println!("{:?}", &self.source.lines().nth(3).unwrap()[..c2 + 1]);
 
         f.write_str(buffer.as_str())
     }
