@@ -23,7 +23,7 @@ pub enum Action<'parsemes, 'filestr> {
     SetState(Hotkey<'parsemes, 'filestr>),
     Command(
         WithSpan<'filestr, Chord>,
-        &'parsemes [WithSpan<'filestr, ()>],
+        Shortcut<'parsemes, 'filestr>,
     ),
 }
 
@@ -163,7 +163,7 @@ fn partition_to_action<'parsemes, 'filestr>(
     let first_shortcut = &partition[0];
     let trigger = first_shortcut.hotkey[col].clone();
     if partition.len() == 1 && first_shortcut.hotkey.len() == col + 1 {
-        Action::Command(trigger, first_shortcut.command)
+        Action::Command(trigger, first_shortcut.clone())
     } else {
         Action::SetState(&first_shortcut.hotkey[0..col + 1])
     }

@@ -1,13 +1,13 @@
 use crate::constants::KEYCODES;
-use crate::deserialise::{DeserialisedChord, Print, TrimEscapeStrList};
+use crate::deserialise::{DeserialisedChord, ListChord, Print};
 use crate::keyspace::{Action, KeyspaceOwner};
 use crate::structs::{Chord, Shortcut, WithSpan};
 use crate::{array, define_buttons, precalculate_capacity_and_build};
 
-pub struct I3<'keyspaces, 'parsemes, 'filestr>(pub &'keyspaces KeyspaceOwner<'parsemes, 'filestr>);
+pub struct I3Shell<'keyspaces, 'parsemes, 'filestr>(pub &'keyspaces KeyspaceOwner<'parsemes, 'filestr>);
 struct I3Action<'keyspaces, 'parsemes, 'filestr>(&'keyspaces Action<'parsemes, 'filestr>);
 
-impl<'keyspaces, 'parsemes, 'filestr> Print for I3<'keyspaces, 'parsemes, 'filestr> {
+impl<'keyspaces, 'parsemes, 'filestr> Print for I3Shell<'keyspaces, 'parsemes, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
         let mut iter = self.0.to_iter();
         // @TODO check if keyspace always has at least one
@@ -46,10 +46,9 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
         let set_mode = " mode \"";
         let exec = " exec --no-startup-id ";
         let close = "\"";
-        let quote = '"';
-        let candidates = &['"', '\\'];
-        let escape = &["\\\\\"", "\\\\\\\\"];
+
         let trigger = i3_wrap_chord(self.0.key_trigger());
+        let runner = "hotkey.sh ";
     } {
         match &self.0 {
             Action::SetState(title) =>
@@ -58,35 +57,39 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
                     + set_mode.len()
                     + array!(@len_join { title } |> i3_wrap_title, " ; ")
                     + close.len(),
-            Action::Command(_, Shortcut { command, .. }) =>
+            Action::Command(_, Shortcut { hotkey, .. }) =>
                 bind.len()
                     + trigger.string_len()
                     + exec.len()
-                    + TrimEscapeStrList(quote, candidates, escape, command).string_len(),
+                    + runner.len()
+                    + 1
+                    + array!(@len_join { hotkey } |> ListChord, " ; ")
+                    + 1,
         } => match &self.0 {
             Action::SetState(title) => {
                 buffer.push_str(bind);
                 trigger.push_string_into(buffer);
 
                 #[cfg(debug_assertions)]
-                debug_assert!(!trigger.to_string_custom().contains(quote));
+                debug_assert!(!trigger.to_string_custom().contains('"'));
 
                 buffer.push_str(set_mode);
                 array!(@push_join { title } |> i3_wrap_title, " ; ", |> buffer);
                 buffer.push_str(close);
             }
-            Action::Command(_, Shortcut { command, .. }) => {
+            Action::Command(_, Shortcut { hotkey, .. }) => {
                 buffer.push_str(bind);
                 trigger.push_string_into(buffer);
                 buffer.push_str(exec);
-
-                TrimEscapeStrList(quote, candidates, escape, command).push_string_into(buffer);
+                buffer.push_str(runner);
+                buffer.push('"');
+                array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
+                buffer.push('"');
             }
         };
     });
 }
 
-//run: cargo test -- --nocapture
 // Second ident is just the name of a test function
 define_buttons!(@MODS I3_MODIFIERS test_hotkey_modifiers {
     Alt => "Mod1",

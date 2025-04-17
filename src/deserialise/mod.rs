@@ -1,4 +1,14 @@
-macro_rules! import {
+// Following the theme of this entire project, we calculating the exact
+// memory required for printing to save on allocations instead of implementing
+// '.to_string()' (i.e. impl std::fmt::Display).
+//
+// This is re-exports the print adaptors for various hotkey formats
+// This also has the Print trait and various macros/functions that are used
+// for the modules used inside of here
+//
+// Technically reporter.rs probably should also exist inside this
+
+macro_rules! reexport {
     ($mod:ident::$struct:ident) => {
         mod $mod;
         pub use $mod::$struct;
@@ -9,14 +19,27 @@ macro_rules! import {
     };
 }
 
-import!(i3::I3);
-import!(keyspace_preview::KeyspacePreview);
-import!(list_preview::{ListPreview, ListChord});
+reexport!(keyspace_preview::KeyspacePreview); // Default printer
+reexport!(list_preview::{ListPreview, ListChord}); // Default printer
+reexport!(shellscript::Shellscript); // For external file to be used by others
+
+reexport!(i3::I3); // No way to escape newlines, so should avoid this
+reexport!(i3_shell::I3Shell);
+// @TODO leftwm
+// @TODO sxhkd
+// @TODO dwm
+// @TODO external shellscript that handles adapting for us
 
 use std::cmp;
-use crate::precalculate_capacity_and_build;
-use crate::structs::{Chord, WithSpan};
 
+use crate::precalculate_capacity_and_build;
+use crate::structs::{Chord, Cursor, WithSpan};
+
+/****************************************************************************
+ * Print trait
+ ****************************************************************************/
+// This works by building up a buffer instead of allocating a buffer on
+// every 'to_string()' call
 pub trait Print {
     fn string_len(&self) -> usize;
     fn push_string_into(&self, buffer: &mut String);
@@ -24,6 +47,10 @@ pub trait Print {
     fn to_string_custom(&self) -> String;
 }
 
+/****************************************************************************
+ * Macros
+ ****************************************************************************/
+// For dealing with an array views of printable elements
 #[macro_export]
 macro_rules! array {
     // For displaying:
@@ -118,16 +145,86 @@ macro_rules! precalculate_capacity_and_build {
     };
 }
 
+// This essentially copies constants::KEYCODES or constants::MODIFIERS, and
+// allows you to do a non-exhaustive match, to set each value
+//
+// constants::KEYCODES and constants::MODIFIERS are for parsing the input file
+// This is for setting the output substr for all the keys for use inside of
+// ListChord
+// The default print behaviour (ListPreview and KeyspacePreview) does not remap
+#[macro_export]
+macro_rules! define_buttons {
+    (@KEYS $varname:ident $test_fn:ident { $($from:ident => $into:literal, )* }) => {
+        $crate::define_buttons!(@define
+            $crate::constants::KEYCODES, $crate::constants::Keycodes, Keycodes
+            |> $varname $test_fn { $( $from => $into, )* }
+        );
+    };
+    (@MODS $varname:ident $test_fn:ident { $($from:ident => $into:literal, )* }) => {
+        $crate::define_buttons!(@define
+            $crate::constants::MODIFIERS, $crate::constants::Modifiers, Modifiers
+            |> $varname $test_fn { $( $from => $into, )* }
+        );
+    };
+
+    (@define $FROM_STRS:path, $from_enum_path:path, $FromEnum:ident
+        |> $INTO:ident $test_fn:ident {
+        $( $from:ident => $into:literal, )*
+    }) => {
+        const $INTO: [&str; $FROM_STRS.len()] = {
+            let mut temp = $FROM_STRS;
+            use $from_enum_path;
+            $( temp[$FromEnum::$from as usize] = $into; )*
+            temp
+        };
+
+        #[test]
+        fn $test_fn() {
+            use $from_enum_path;
+
+            // Check that the input is ordered in the same way for clarity
+            {
+                let pre_sorted = vec![$( $FromEnum::$from as usize, )*];
+                let mut postsorted = pre_sorted.clone();
+                postsorted.sort_unstable();
+                assert_eq!(pre_sorted, postsorted, "{} {}",
+                    "Enter in the same order specified in constants.rs.",
+                    "This helps for consistency.",
+                );
+            }
+
+            // testing for duplicates
+            {
+                let mut sorted_buffer1 = vec![$( $FromEnum::$from as usize, )*];
+                let mut sorted_buffer2 = vec![$( $into, )*];
+                let len = sorted_buffer1.len();
+                sorted_buffer1.sort_unstable();
+                sorted_buffer1.dedup();
+                sorted_buffer2.sort_unstable();
+                sorted_buffer2.dedup();
+                assert_eq!(len, sorted_buffer1.len(),
+                    "Trying to map a button to two different values");
+                assert_eq!(len, sorted_buffer2.len(),
+                    "Trying to map two button to the same representation");
+            }
+
+        }
+    };
+}
+
+/****************************************************************************
+ * Print implementations for essentially '&[&str]', '&str', and 'Chord'
+ ****************************************************************************/
 pub struct EscapedStrList<'list, 'filestr>(
     char,
     &'static [char],
     &'static [&'static str],
-    &'list [WithSpan<'filestr, ()>]
+    &'list [WithSpan<'filestr, ()>],
 );
 struct EscapedStr<'list, 'filestr>(
     &'static [char],
     &'static [&'static str],
-    &'list WithSpan<'filestr, ()>
+    &'list WithSpan<'filestr, ()>,
 );
 
 impl<'list, 'filestr> Print for EscapedStrList<'list, 'filestr> {
@@ -163,43 +260,25 @@ impl<'list, 'filestr> Print for EscapedStr<'list, 'filestr> {
 
     } {
         first.len() => buffer.push_str(first);
-        new_iter.map(|(escaped, s)| escaped.len() + s.len()).sum::<usize>() => {
+        new_iter.map(|(escaped, s)| escaped.len() + s.len()).sum::<usize>() =>
             new_iter.for_each(|(escaped_delim, s)| {
                 buffer.push_str(escaped_delim);
                 buffer.push_str(s);
-            })
-        };
+            });
     });
 }
-
-pub fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
-    (substr.as_ptr() as usize) - (source.as_ptr() as usize)
-}
-
-fn respan_to<'list, 'filestr>(
-    substr_span: &'list WithSpan<'filestr, ()>,
-    target_substr: &'filestr str,
-) -> WithSpan<'filestr, ()> {
-    let offset = index_of_substr(substr_span.context, target_substr);
-    WithSpan {
-        data: (),
-        context: substr_span.context,
-        range: offset..offset + target_substr.len(),
-    }
-}
-
 
 pub struct TrimEscapeStrList<'list, 'filestr>(
     char,
     &'static [char],
     &'static [&'static str],
-    &'list [WithSpan<'filestr, ()>]
+    &'list [WithSpan<'filestr, ()>],
 );
 impl<'list, 'filestr> Print for TrimEscapeStrList<'list, 'filestr> {
     // Must perform two steps, refine the width of the array
     // and then trim the first and last elements of this refined array
     precalculate_capacity_and_build!(self, buffer {
-        let Self(quote, candidates, escaped, original) = self;
+        let Self(quote, candidates, escape, original) = self;
         // Find the indices that contain non-whitespace entries
         let begin = original.iter()
             .position(|s| !s.as_str().trim_start().is_empty())
@@ -214,78 +293,56 @@ impl<'list, 'filestr> Print for TrimEscapeStrList<'list, 'filestr> {
         // Number of items excluding first and last (- 2)
         let middle_len = if trimmed_len < 2 { 0 } else { trimmed_len - 2 };
 
-        //print!("{},{} {} {:?} {:?}\n", middle_len, trimmed_len, close-begin, trimmed_list.iter().enumerate().take(middle_len).skip(1).fold("", |_, (i, a)| a.as_str()), "");
+        //print!("{},{} {:?} {:?}\n",
+        //    middle_len,
+        //    trimmed_len,
+        //    original[close].as_str(),
+        //    trimmed_list.iter().enumerate()
+        //        .take(middle_len)
+        //        .skip(1)
+        //        .fold("", |_, (_, a)| a.as_str()),
+        //);
 
         let mut iter = trimmed_list.iter();
+
+        // Have to own the span here
         let first = iter.next().map(|span| {
             let s = span.as_str();
             respan_to(span, if trimmed_len < 2 { s.trim() } else { s.trim_start() })
         });
+        let finis = if begin != close {
+            Some(respan_to(&original[close], original[close].as_str().trim_end()))
+        } else {
+            None
+        };
     } {
         quote.len_utf8() => buffer.push(*quote);
 
         // Print 'trim_start()' or 'trim()' for the first element
-        first.map(|s| EscapedStr(candidates, escaped, &s).string_len()).unwrap_or(0)
-            => first.map(|s| EscapedStr(candidates, escaped, &s).push_string_into(buffer));
-        // NOTE: iter.next() called once already
+        first.map(|s| EscapedStr(candidates, escape, &s).string_len()).unwrap_or(0)
+            => first.map(|s| EscapedStr(candidates, escape, &s).push_string_into(buffer));
+
+        // NOTE: iter.next() called once already (skipping first)
         iter.take(middle_len).map(|s|
-            EscapedStr(candidates, escaped, s).string_len()
+            EscapedStr(candidates, escape, s).string_len()
         ).sum::<usize>() => iter.take(middle_len).for_each(|s|
-            EscapedStr(candidates, escaped, s).push_string_into(buffer)
+            EscapedStr(candidates, escape, s).push_string_into(buffer)
         );
 
         // If trimmed_len >= 2, then we are printing a 'trim_end()'
-        if begin != close {
-            EscapedStr(candidates, escaped, &original[close]).string_len()
-        } else {
-            0
-        } => if begin != close {
-            EscapedStr(candidates, escaped, &original[close]).push_string_into(buffer);
-        };
+        finis.map(|s| EscapedStr(candidates, escape, &s).string_len()).unwrap_or(0) =>
+            finis.map(|s| EscapedStr(candidates, escape, &s).push_string_into(buffer));
+
+        //if begin != close {
+        //    EscapedStr(candidates, escape, &original[close]).string_len()
+        //} else {
+        //    0
+        //} => if begin != close {
+        //    EscapedStr(candidates, escape, &original[close]).push_string_into(buffer);
+        //};
 
         quote.len_utf8() => buffer.push(*quote);
     });
-}
-
-#[macro_export]
-macro_rules! define_buttons {
-    (@KEYS $varname:ident $test_fn:ident { $($from:ident => $into:literal, )* }) => {
-        $crate::define_buttons!(@define $crate::constants::KEYCODES
-            |> $varname $test_fn { $( $from => $into, )* }
-        );
-    };
-    (@MODS $varname:ident $test_fn:ident { $($from:ident => $into:literal, )* }) => {
-        $crate::define_buttons!(@define $crate::constants::MODIFIERS
-            |> $varname $test_fn { $( $from => $into, )* }
-        );
-    };
-
-    (@define $FROM:path |> $INTO:ident $test_fn:ident {
-        $( $from:ident => $into:literal, )*
-    }) => {
-        const $INTO: [&str; $FROM.len()] = {
-            let mut temp = $FROM;
-            $( temp[$crate::constants::Modifiers::$from as usize] = $into; )*
-            temp
-        };
-
-        #[test]
-        fn $test_fn() {
-            use $crate::constants::Modifiers;
-            // testing for duplicates
-            let mut buffer1 = vec![$( Modifiers::$from as usize, )*];
-            let mut buffer2 = vec![$( $into, )*];
-            let len = buffer1.len();
-            buffer1.sort_unstable();
-            buffer1.dedup();
-            buffer2.sort_unstable();
-            buffer2.dedup();
-            debug_assert_eq!(len, buffer1.len(),
-                "Trying to map a chord modifier to two differen values");
-            debug_assert_eq!(len, buffer2.len(),
-                "Tryping ot map two chord modifiers to the same representation");
-        }
-    };
 }
 
 pub struct DeserialisedChord<'list, 'filestr>(
@@ -328,33 +385,25 @@ impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
     });
 }
 
-// Cannot get this to work properly so we using array!() instead
+/****************************************************************************
+ * Helper functions
+ ****************************************************************************/
+pub fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
+    (substr.as_ptr() as usize) - (source.as_ptr() as usize)
+}
 
-//pub fn print_array<A, T: Print>(hello: &[A], map: impl Fn(&A) -> T, buffer: &mut String) {
-//    hello.iter().for_each(|x| {
-//        map(x).push_string_into(buffer);
-//    })
-//}
-//pub struct PrintArray<'list, T: Print>(&'static str, &'list [T]);
-//impl<'list, T: Print> Print for PrintArray<'list, T> {
-//    precalculate_capacity_and_build!(self, buffer {
-//        let PrintArray(delim, list) = self;
-//        let mut iter = list.iter();
-//        let first = iter.next();
-//    } {
-//        first.map(|x| x.string_len()).unwrap_or(0) => if let Some(x) = first {
-//            x.push_string_into(buffer);
-//        };
-//
-//        iter.map(|x| delim.len() + x.string_len()).sum::<usize>() => iter.for_each(|x| {
-//            buffer.push_str(delim);
-//            x.push_string_into(buffer);
-//        });
-//    });
-//}
+fn respan_to<'list, 'filestr>(
+    substr_span: &'list WithSpan<'filestr, ()>,
+    target_substr: &'filestr str,
+) -> WithSpan<'filestr, ()> {
+    let offset = index_of_substr(substr_span.context, target_substr);
+    WithSpan {
+        data: (),
+        context: substr_span.context,
+        range: offset..offset + target_substr.len(),
+    }
+}
 
-
-use crate::structs::Cursor;
 struct DelimSplit<'a, 'b> {
     source: &'a str,
     iter: std::str::Chars<'a>,
@@ -377,7 +426,13 @@ impl<'a, 'b> DelimSplit<'a, 'b> {
 impl<'a, 'b> Iterator for DelimSplit<'a, 'b> {
     type Item = (&'a str, &'a str);
     fn next(&mut self) -> Option<Self::Item> {
-        let Self { source, iter, delim, peek_delim, cursor } = self;
+        let Self {
+            source,
+            iter,
+            delim,
+            peek_delim,
+            cursor,
+        } = self;
         debug_assert_eq!(None, {
             let mut a = "".chars();
             a.next();
@@ -409,9 +464,6 @@ impl<'a, 'b> Iterator for DelimSplit<'a, 'b> {
 #[test]
 fn custom_split() {
     let escape_list = ['"', '\\'];
-    //let mut iter = "asdf".chars();
-    //println!("{:?}", iter.position(|c| c == 'd'));
-    //println!("{:?}", iter.next());
 
     let example = "a";
     let mut delim_iter = DelimSplit::new(example, &escape_list[..]);

@@ -1,5 +1,6 @@
-use crate::deserialise::{TrimEscapeStrList, ListChord, Print};
+use crate::deserialise::{ListChord, Print, TrimEscapeStrList};
 use crate::keyspace::{Action, KeyspaceOwner};
+use crate::structs::Shortcut;
 use crate::{array, precalculate_capacity_and_build};
 
 pub struct KeyspacePreview<'keyspaces, 'parsemes, 'filestr>(
@@ -52,7 +53,7 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for KeyspaceAction<'keyspaces, 'pars
                 + arrow.len()
                 //+ title.string_len(),
                 + array!(@len_join { title } |> ListChord, " ; "),
-            Action::Command(_, command) =>
+            Action::Command(_, Shortcut { command, .. }) =>
                 ListChord(hotkey_trigger).string_len()
                 + arrow.len()
                 + TrimEscapeStrList(quote, candidates, escape, command).string_len(),
@@ -64,7 +65,7 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for KeyspaceAction<'keyspaces, 'pars
                 //title.push_string_into(buffer);
                 array!(@push_join { title } |> ListChord, " ; ", |> buffer);
             }
-            Action::Command(_, command) => {
+            Action::Command(_, Shortcut { command, .. }) => {
                 ListChord(hotkey_trigger).push_string_into(buffer);
                 buffer.push_str(arrow);
                 TrimEscapeStrList(quote, candidates, escape, command).push_string_into(buffer);

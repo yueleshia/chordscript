@@ -54,8 +54,6 @@ impl Cursor {
     }
 }
 
-pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
-
 type ChordModifiers = u8;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -102,7 +100,9 @@ fn chord_modifiers_big_enough() {
     );
 }
 
-#[derive(Debug)]
+pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
+
+#[derive(Clone, Debug)]
 pub struct Shortcut<'owner, 'filestr> {
     pub hotkey: Hotkey<'owner, 'filestr>,
     pub command: &'owner [WithSpan<'filestr, ()>],

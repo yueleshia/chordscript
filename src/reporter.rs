@@ -24,7 +24,7 @@ use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
 use crate::precalculate_capacity_and_build;
-use crate::deserialise::Print;
+use crate::deserialise::{index_of_substr, Print};
 use crate::structs::WithSpan;
 
 // (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
@@ -266,10 +266,6 @@ impl Print for MarkupError {
 /****************************************************************************
  * For printing
  ****************************************************************************/
-fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
-    (substr.as_ptr() as usize) - (source.as_ptr() as usize)
-}
-
 // If I do include this, need to deal with error markers are trimmed substrings
 //fn trim_to_limit(line: &str, is_reverse: bool) -> (&str, &str) {
 //    let len = line.width_cjk();
