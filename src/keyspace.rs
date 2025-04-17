@@ -21,7 +21,10 @@ pub struct Keyspace<'parsemes, 'filestr> {
 #[derive(Debug)]
 pub enum Action<'parsemes, 'filestr> {
     SetState(&'parsemes [WithSpan<'filestr, Chord>]),
-    Command(WithSpan<'filestr, Chord>, &'parsemes [WithSpan<'filestr, ()>]),
+    Command(
+        WithSpan<'filestr, Chord>,
+        &'parsemes [WithSpan<'filestr, ()>],
+    ),
 }
 
 pub struct KeyspaceOwner<'parsemes, 'filestr> {
@@ -35,59 +38,69 @@ pub struct KeyspaceOwner<'parsemes, 'filestr> {
 pub fn process<'parsemes, 'filestr>(
     shortcut_owner: &'parsemes ShortcutOwner<'filestr>,
 ) -> Result<KeyspaceOwner<'parsemes, 'filestr>, MarkupError> {
-    let mut view = shortcut_owner.make_owned_view();
-    view.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+    let view = shortcut_owner.make_owned_sorted_view();
 
     //let hotkeys: &[Hotkey] = &view;
-    let len = view.len();
-    // @TODO actions and keyspaces capacity
-    let (_capacity, max_depth) = view.iter().fold((1, 0), |(capacity, depth), shortcut| {
-        (
-            capacity + (shortcut.hotkey.len() - 1),
-            cmp::max(depth, shortcut.hotkey.len()),
-        )
-    });
+    let shortcut_len = view.len();
+    let max_depth = view
+        .iter()
+        .fold(0, |depth, shortcut| cmp::max(depth, shortcut.hotkey.len()));
+    let to_process_list = &mut Vec::with_capacity(shortcut_len);
+    let into_partitions = &mut Vec::with_capacity(shortcut_len);
 
-    let to_process_list = &mut Vec::with_capacity(len);
-    let into_partitions = &mut Vec::with_capacity(len);
     to_process_list.push(&view[..]);
-
-    let mut keyspaces = Vec::with_capacity(100);
-    let mut all_actions = Vec::with_capacity(100);
-    let mut cursor = Cursor(all_actions.len());
-    for col in 0..max_depth {
-        debug_assert_eq!(
-            to_process_list.capacity(),
-            into_partitions.capacity(),
-            "Should not have grown 'into_store'"
-        );
-
-        for base in to_process_list.iter() {
-            partition_by_col_into(col, base, into_partitions);
-            into_partitions.iter()
-                .map(|partition| partition_to_action(col, partition))
-                .for_each(|action| all_actions.push(action));
-
-            // If previous iteration only push a Action::Command, then 'base'
-            // is partitioned into null (not pushed to 'all_actions')
-            let range = cursor.move_to(all_actions.len());
-            if !range.is_empty() {
-                // Pre-calculating 'max_depth' ensures >= one partition every 'col'
-                keyspaces.push(Keyspace {
-                    title: &base[0].hotkey[0..col],
-                    actions: range,
-                });
+    let (keyspace_capacity, action_capacity) = {
+        let mut capacity = (0, 0);
+        for col in 0..max_depth {
+            for base in to_process_list.iter() {
+                partition_by_col_into(col, base, into_partitions);
+                capacity.1 += into_partitions.len();
+                if !into_partitions.is_empty() {
+                    capacity.0 += 1;
+                }
             }
+            mem::swap(to_process_list, into_partitions);
         }
-
-        mem::swap(to_process_list, into_partitions);
-    }
-
-    let owner = KeyspaceOwner {
-        keyspaces,
-        all_actions,
+        capacity
     };
 
+    let owner = {
+        let mut keyspaces = Vec::with_capacity(keyspace_capacity);
+        let mut all_actions = Vec::with_capacity(action_capacity);
+        let mut cursor = Cursor(0);
+        to_process_list.clear();
+        to_process_list.push(&view[..]);
+
+        for col in 0..max_depth {
+            for base in to_process_list.iter() {
+                partition_by_col_into(col, base, into_partitions);
+                into_partitions
+                    .iter()
+                    .for_each(|partition| all_actions.push(partition_to_action(col, partition)));
+
+                // If previous iteration only push a Action::Command, then 'base'
+                // is partitioned into null (not pushed to 'all_actions')
+                if !into_partitions.is_empty() {
+                    // Pre-calculating 'max_depth' ensures >= one partition every 'col'
+                    keyspaces.push(Keyspace {
+                        title: &base[0].hotkey[0..col],
+                        actions: cursor.move_to(all_actions.len()),
+                    });
+                }
+            }
+
+            mem::swap(to_process_list, into_partitions);
+        }
+        debug_assert_eq!(shortcut_len, to_process_list.capacity());
+        debug_assert_eq!(shortcut_len, into_partitions.capacity());
+        debug_assert_eq!(keyspace_capacity, keyspaces.len());
+        debug_assert_eq!(action_capacity, all_actions.len());
+
+        KeyspaceOwner {
+            keyspaces,
+            all_actions,
+        }
+    };
     Ok(owner)
 }
 
@@ -99,7 +112,7 @@ pub fn process<'parsemes, 'filestr>(
  ****************************************************************************/
 fn partition_to_action<'parsemes, 'filestr>(
     col: usize,
-    partition: &[Shortcut<'parsemes, 'filestr>]
+    partition: &[Shortcut<'parsemes, 'filestr>],
 ) -> Action<'parsemes, 'filestr> {
     let first_shortcut = &partition[0];
     if partition.len() == 1 && first_shortcut.hotkey.len() == col + 1 {
@@ -126,7 +139,9 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
     if let Some((start_index, start_shortcut)) = first {
         let partition = &input[start_index..];
         debug_assert!(
-            partition.iter().all(|shortcut| shortcut.hotkey.get(col).is_some()),
+            partition
+                .iter()
+                .all(|shortcut| shortcut.hotkey.get(col).is_some()),
             "Sorting guaranteed violated. Shortcuts from 'start_index'.. do not have enough chords"
         );
 
@@ -146,7 +161,6 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
         debug_assert!(!range.is_empty());
         into_store.push(&partition[range]);
     } // else do not push hotkeys without enough chords
-
 }
 
 /****************************************************************************
@@ -185,7 +199,11 @@ pub fn debug_print_keyspace_owner(
                 Action::Command(chord, command) => format!(
                     "{} -> {:?}",
                     chord.data,
-                    command.iter().map(|with_span| with_span.as_str()).collect::<Vec<_>>().join("")
+                    command
+                        .iter()
+                        .map(|with_span| with_span.as_str())
+                        .collect::<Vec<_>>()
+                        .join("")
                 ),
             })
             .collect::<Vec<_>>()

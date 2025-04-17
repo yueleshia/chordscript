@@ -61,10 +61,8 @@ pub fn process<'filestr>(
             //println!("Permutations: {}", head_data.space.permutations);
             //println!("Space: {}", head_data.space.items);
 
-            println!("{:?} {:?}", lexeme.body, head_data.space);
             rendered_head_capacity += head_data.space.items;
             rendered_body_capacity += body_data.space.items;
-            println!("{:?} {:?}", lexeme.body, head_data.space);
 
             hotkey_capacity += head_data.space.permutations;
             partition_max = cmp::max(partition_max, head_data.partition_count);
@@ -110,8 +108,7 @@ pub fn process<'filestr>(
 
         debug_assert_eq!(hotkey_capacity, owner.shortcuts.len());
         debug_assert_eq!(rendered_head_capacity, owner.chords.len());
-        println!("{:?} {}", rendered_body_capacity, owner.scripts.len());
-        //debug_assert_eq!(rendered_body_capacity, owner.scripts.len());
+        debug_assert_eq!(rendered_body_capacity, owner.scripts.len());
         owner
     };
 
@@ -152,12 +149,12 @@ pub fn process<'filestr>(
 
 define_syntax! {
     parse_syntax | state: State
-        ! metadata: &mut Metadata, index: usize, is_push: &mut Option<&mut Permutations>,
+        ! data: &mut Metadata, index: usize, is_push: &mut Option<&mut Permutations>,
         (lexeme: Either)
     | -> (),
     Loop {
-        Either::H(HeadType::ChordDelim) => metadata.partition_width += 1;
-        Either::B(BodyType::Section) => metadata.partition_width += 1;
+        Either::H(HeadType::ChordDelim) => data.partition_width += 1;
+        Either::B(BodyType::Section) => data.partition_width += 1;
 
         Either::H(HeadType::ChoiceBegin) | Either::B(BodyType::ChoiceBegin) => {
             if let Some(generator) = is_push {
@@ -165,39 +162,43 @@ define_syntax! {
                 // Skip HeadType::ChoiceBegin
                 generator.cursor.move_to(index + 1);
             }
-            metadata.space.calc_space(1, metadata.partition_width);
+            data.space.calc_space(1, data.partition_width);
 
-            metadata.choice_count = 0;
-            metadata.partition_width = 0;
-            metadata.partition_count += 1;
+            data.choice_count = 0;
+            data.partition_width = 0;
+            data.partition_count += 1;
         };
 
         Either::H(HeadType::ChoiceDelim) | Either::B(BodyType::ChoiceDelim) =>
-            metadata.choice_count += 1;
+            data.choice_count += 1;
 
         Either::H(HeadType::ChoiceClose) | Either::B(BodyType::ChoiceClose)  => {
             if let Some(generator) = is_push {
-                generator.push_digit_weight(metadata.choice_count + 1, index);
+                generator.push_digit_weight(data.choice_count + 1, index);
                 // Skip HeadType::ChoiceClose
                 generator.cursor.move_to(index + 1);
             }
-            metadata.space.calc_space(metadata.choice_count + 1, metadata.partition_width);
-            //metadata.choice_count = 0; // Only needed if we reset
-            metadata.partition_width = 0;
-            metadata.partition_count += 1;
+            data.space.calc_space(data.choice_count + 1, data.partition_width);
+            //data.choice_count = 0; // Only needed if we reset
+            data.partition_width = 0;
+            data.partition_count += 1;
         };
         _ => {};
     }
 
     End {
-        _ => {
-            metadata.space.calc_space(1, metadata.partition_width + 1);
-            metadata.partition_count += 1;
+        l => {
+            // @TODO Investigate why head is +1 but body is not
+            match l {
+                Either::H(_) => data.space.calc_space(1, data.partition_width + 1),
+                Either::B(_) => data.space.calc_space(1, data.partition_width),
+            };
+            data.partition_count += 1;
             // NOTE: index for State::End is the rindex (+ 1 of normal)
             if let Some(generator) = is_push {
                 // Include till end
                 generator.push_digit_weight(1, index);
-                debug_assert_eq!(metadata.space.permutations, generator.permutations());
+                debug_assert_eq!(data.space.permutations, generator.permutations());
             }
         };
     }
@@ -279,6 +280,7 @@ fn parse_lexeme(
             if body_data.space.permutations > head_data.space.permutations {
                 return Err(choice_count_error(lexeme.body, i));
             }
+            //println!("{:?} {:?}", body_lexeme.as_str(), body_data.space);
             Ok(())
         })?;
 
@@ -289,7 +291,7 @@ fn parse_lexeme(
         body_generator,
         Either::B(&BodyType::Section),
     )?;
-
+    //println!("done {:?}\n", body_data.space);
     Ok((head_data, body_data))
 }
 
@@ -357,7 +359,7 @@ impl<'filestr> ShortcutOwner<'filestr> {
             let last = &head.last().unwrap().range;
             let range = if head_begin == self.chords.len() {
                 const BAR: usize = "|".len(); // Includes bars around head
-                (&head[0].range.start - BAR, last.end + BAR)
+                (head[0].range.start - BAR, last.end + BAR)
             } else {
                 let len = head.len();
                 let (index, _) = find_prev_from!(head, len, HeadType::ChordDelim);
