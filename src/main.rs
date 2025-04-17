@@ -4,6 +4,7 @@
 mod constants;
 mod errors;
 mod lexer;
+mod macros;
 mod reporter;
 
 fn main() {
@@ -24,11 +25,11 @@ fn interpret() {
     //println!("{}", _file);
 
     let _error = reporter::MarkupError::new(_file, &_file[20..35], "what a failure".to_string());
-    let lexemes = lexer::process(_file).unwrap();
+    let _lexemes = lexer::process(_file).unwrap();
     //println!("{}", _error);
 
-    for (i, x) in lexemes.heads.iter().enumerate() {
-        println!("{}: {:?}", i, x);
-    }
+    //for (i, x) in _lexemes.heads.iter().enumerate() {
+    //    println!("{}: {:?}", i, x);
+    //}
     //println!("{:#?}", tokens.bodys);
 }

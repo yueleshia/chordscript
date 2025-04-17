@@ -1,23 +1,6 @@
 //run: cargo test -- --nocapture
 
-macro_rules! map {
-    ($arg:ident : $type:ty |> $i:ident in $from:literal .. $till:expr => {
-        $( $loop_body:stmt );*
-    }) => {
-        {
-            const fn for_loop(mut $arg : $type, $i: usize) -> $type {
-                if $i < $till {
-                    $( $loop_body );*
-                    for_loop($arg, $i + 1)
-                } else {
-                    $arg
-                }
-            }
-            for_loop($arg, $from)
-        }
-    }
-}
-
+use crate::map;
 
 // https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
 // These contain no semantic meaning in head

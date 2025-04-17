@@ -46,50 +46,62 @@ pub enum HeadLexeme {
     Key(usize),
     Mod(usize),
     ChordDelim,
-    ChoiceDelim,
     Blank,
     ChoiceBegin,
+    ChoiceDelim,
     ChoiceClose,
 }
 #[derive(Debug)]
 pub enum BodyLexeme<'a> {
     Section(&'a str),
-    Separator,
     ChoiceBegin,
+    ChoiceDelim,
     ChoiceClose,
 }
 
 // Basically one glorified match with these three variables as arguments
 define_syntax! { fsm, tokens, is_push,
     Head {
-        (',', i, _) => fsm.report(i, i + ','.len_utf8(), errors::HEAD_COMMA_OUTSIDE_BRACKETS);
-        ('\\', i, _) => fsm.report(i, i + '\\'.len_utf8(), errors::HEAD_NO_ESCAPING);
+        (',', i, _) => fsm.report(
+            &fsm.source[i..i + ','.len_utf8()],
+            errors::HEAD_COMMA_OUTSIDE_BRACKETS
+        );
+        ('\\', i, _) => fsm.report(
+            &fsm.source[i..i + '\\'.len_utf8()],
+            errors::HEAD_NO_ESCAPING,
+        );
 
         ('|', i, _) => {
-            let keystr = fsm.cursor_move_to(i);
-            fsm.cursor_move_to(i + '|'.len_utf8());
             fsm.state = State::Body;
 
+            let keystr = fsm.cursor_move_to(i);
+            fsm.cursor_move_to(i + '|'.len_utf8());
+            // No eat separator while in State::Body
+
             if is_push {
-                tokens.head_push_key(keystr)
+                tokens.head_push_key(fsm, keystr)?;
             }
             Ok((0, 1, 0))
         };
 
         ('{', i, _) => {
             if let Some(('{', _, _)) = fsm.next() { // Second '{'
+                fsm.state = State::HeadBrackets;
+
                 let keystr = fsm.cursor_move_to(i);
                 fsm.eat_charlist(&SEPARATOR);
                 fsm.cursor_move_to(fsm.rindex);
-                fsm.state = State::HeadBrackets;
 
                 if is_push {
-                    tokens.head_push_key(keystr);
+                    tokens.head_push_key(fsm, keystr)?;
                     tokens.heads.push(HeadLexeme::ChoiceBegin);
                 }
                 Ok((0, 2, 0))
             } else {
-                fsm.report(i + '{'.len_utf8(), i + "{{".len(), errors::MISSING_LBRACKET)
+                fsm.report(
+                    &fsm.source[i + '{'.len_utf8()..i + "{{".len()],
+                    errors::MISSING_LBRACKET,
+                )
             }
         };
 
@@ -99,7 +111,7 @@ define_syntax! { fsm, tokens, is_push,
             fsm.cursor_move_to(fsm.rindex);
 
             if is_push {
-                tokens.head_push_key(keystr);
+                tokens.head_push_key(fsm, keystr)?;
                 if ch == ';' {
                     tokens.heads.push(HeadLexeme::ChordDelim);
                 }
@@ -121,23 +133,33 @@ define_syntax! { fsm, tokens, is_push,
     }
 
     HeadBrackets {
-        ('|', i, _) => fsm.report(i, i + '|'.len_utf8(), errors::HEAD_INVALID_CLOSE);
-        ('\\', i, _) => fsm.report(i, i + '\\'.len_utf8(), errors::HEAD_NO_ESCAPING);
+        ('|', i, _) => fsm.report(
+            &fsm.source[i..i + '|'.len_utf8()],
+            errors::HEAD_INVALID_CLOSE,
+        );
+        ('\\', i, _) => fsm.report(
+            &fsm.source[i..i + '\\'.len_utf8()],
+            errors::HEAD_NO_ESCAPING,
+        );
 
         ('}', i, _) => {
             if let Some(('}', _, _)) = fsm.next() { // second '}'
+                fsm.state = State::Head;
+
                 let keystr = fsm.cursor_move_to(i);
                 fsm.eat_charlist(&SEPARATOR);
                 fsm.cursor_move_to(fsm.rindex);
-                fsm.state = State::Head;
 
                 if is_push {
-                    tokens.head_push_key(keystr);
+                    tokens.head_push_key(fsm, keystr)?;
                     tokens.heads.push(HeadLexeme::ChoiceClose);
                 }
                 Ok((0, 2, 0))
             } else {
-                fsm.report(i + '}'.len_utf8(), i + "}}".len(), errors::MISSING_RBRACKET)
+                fsm.report(
+                    &fsm.source[i + '}'.len_utf8()..i + "}}".len()],
+                    errors::MISSING_RBRACKET,
+                )
             }
         };
 
@@ -146,7 +168,7 @@ define_syntax! { fsm, tokens, is_push,
             fsm.eat_charlist(&SEPARATOR);
             fsm.cursor_move_to(fsm.rindex);
             if is_push {
-                tokens.head_push_key(keystr);
+                tokens.head_push_key(fsm, keystr)?;
                 match ch {
                     ';' => tokens.heads.push(HeadLexeme::ChordDelim),
                     ',' => tokens.heads.push(HeadLexeme::ChoiceDelim),
@@ -168,13 +190,15 @@ define_syntax! { fsm, tokens, is_push,
         };
     }
 
+    // No eating separator while in State::Body
     Body {
         ('\n', i, rest) if rest.starts_with("\n|") => {
+            fsm.state = State::Head;
+
             let include_newline = fsm.cursor_move_to(i + 1);
             fsm.next(); // Skip '|'
-            fsm.eat_charlist(&SEPARATOR);
+            fsm.eat_charlist(&SEPARATOR); // Eat cause in State::Head
             fsm.cursor_move_to(i + "\n|".len());
-            fsm.state = State::Head;
 
             if is_push {
                 tokens.bodys.push(BodyLexeme::Section(include_newline));
@@ -259,7 +283,7 @@ impl<'a> LexemeLists<'a> {
         }
     }
 
-    fn head_push_key(&mut self, keystr: &'a str) {
+    fn head_push_key(&mut self, fsm: &FileIter<'a>, keystr: &'a str) -> Result<(), MarkupError> {
         if keystr.is_empty() {
             self.heads.push(HeadLexeme::Blank);
         } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
@@ -267,8 +291,9 @@ impl<'a> LexemeLists<'a> {
         } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
             self.heads.push(HeadLexeme::Key(i));
         } else {
-            panic!("Invalid key. {} ", keystr)
+            fsm.report(keystr, errors::HEAD_INVALID_KEY)?;
         }
+        Ok(())
     }
 
     //fn push_into_head(&mut self, head_lexeme: HeadLexeme<'a>, source: &'a str) {
@@ -320,8 +345,10 @@ impl<'a> FileIter<'a> {
         }
     }
 
-    fn report(&self, begin: usize, close: usize, message: &str) -> Result<LexerCapacities, MarkupError> {
-        Err(MarkupError::new(&self.source, &self.source[begin..close], message.to_string()))
+    fn report(
+        &'a self, span: &'a str, message: &str
+    ) -> Result<LexerCapacities, MarkupError> {
+        Err(MarkupError::new(&self.source, span, message.to_string()))
     }
 }
 
