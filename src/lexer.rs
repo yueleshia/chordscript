@@ -58,11 +58,11 @@ impl<'filestr> LexemeOwner<'filestr> {
     ) -> Result<(), MarkupError> {
         let keystr = &data.source[keyrange.start..keyrange.end];
         if keyrange.is_empty() {
-            self.head.push(data.head(HeadType::Blank, keyrange));
+            self.head.push(data.token(HeadType::Blank, keyrange));
         } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
-            self.head.push(data.head(HeadType::Mod(i), keyrange));
+            self.head.push(data.token(HeadType::Mod(i), keyrange));
         } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
-            self.head.push(data.head(HeadType::Key(i), keyrange));
+            self.head.push(data.token(HeadType::Key(i), keyrange));
         } else {
             return Err(data.report(keyrange, errors::HEAD_INVALID_KEY));
         }
@@ -143,7 +143,7 @@ pub fn process(filestr: &str) -> Result<LexemeOwner, MarkupError> {
             State::HeadBrackets => Err(data.report(end, errors::UNFINISHED_BRACKETS)),
             State::Body => {
                 let last_body = data.cursor.move_to(data.source.len());
-                owner.body.push(data.body(BodyType::Section, last_body));
+                owner.body.push(data.token(BodyType::Section, last_body));
                 owner.push_entry(head_cursor, body_cursor);
                 Ok(owner)
             }
@@ -213,7 +213,7 @@ define_syntax! {
 
                 if let Some((tokens, _, _)) = is_push {
                     tokens.head_push_key(data, till_bracket)?;
-                    tokens.head.push(data.head(HeadType::ChoiceBegin, brackets));
+                    tokens.head.push(data.token(HeadType::ChoiceBegin, brackets));
                 }
                 data.head_capacity += 2;
                 //Ok((0, 2, 0))
@@ -233,7 +233,7 @@ define_syntax! {
             if let Some((tokens, _, _)) = is_push {
                 tokens.head_push_key(data, till_punctuation)?;
                 if ch == ';' {
-                    tokens.head.push(data.head(HeadType::ChordDelim, delim));
+                    tokens.head.push(data.token(HeadType::ChordDelim, delim));
                 }
             }
             match ch {
@@ -273,7 +273,7 @@ define_syntax! {
 
                 if let Some((tokens, _, _)) = is_push {
                     tokens.head_push_key(data, till_bracket)?;
-                    tokens.head.push(data.head(HeadType::ChoiceClose, brackets));
+                    tokens.head.push(data.token(HeadType::ChoiceClose, brackets));
                 }
                 data.head_capacity += 2;
                 //Ok((0, 2, 0))
@@ -292,8 +292,8 @@ define_syntax! {
             if let Some((tokens, _, _)) = is_push {
                 tokens.head_push_key(data, till_punctuation)?;
                 match ch {
-                    ';' => tokens.head.push(data.head(HeadType::ChordDelim, punctuation)),
-                    ',' => tokens.head.push(data.head(HeadType::ChoiceDelim, punctuation)),
+                    ';' => tokens.head.push(data.token(HeadType::ChordDelim, punctuation)),
+                    ',' => tokens.head.push(data.token(HeadType::ChoiceDelim, punctuation)),
                     _ => {}
                 }
             }
@@ -325,7 +325,7 @@ define_syntax! {
             data.cursor.move_to(i + "\n|".len());
 
             if let Some((tokens, head_cursor, body_cursor)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, include_newline));
+                tokens.body.push(data.token(BodyType::Section, include_newline));
                 tokens.push_entry(head_cursor, body_cursor);
             }
             data.entry_capacity += 1;
@@ -342,7 +342,7 @@ define_syntax! {
             data.cursor.move_to(data.rindex);
 
             if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, till_bracket));
+                tokens.body.push(data.token(BodyType::Section, till_bracket));
             }
             data.body_capacity += 1;
             //Ok((0, 0, 1))
@@ -356,8 +356,8 @@ define_syntax! {
             let brackets = data.cursor.move_to(data.rindex);
 
             if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, till_bracket));
-                tokens.body.push(data.body(BodyType::ChoiceBegin, brackets));
+                tokens.body.push(data.token(BodyType::Section, till_bracket));
+                tokens.body.push(data.token(BodyType::ChoiceBegin, brackets));
             }
             data.body_capacity += 2;
             //Ok((0, 0, 2))
@@ -376,7 +376,7 @@ define_syntax! {
 
                     if let Some((tokens, _, _)) = is_push {
                         tokens.body.push(
-                            data.body(BodyType::Section, till_backslash)
+                            data.token(BodyType::Section, till_backslash)
                         );
                     }
                     data.body_capacity += 1;
@@ -388,10 +388,10 @@ define_syntax! {
                     if let Some((tokens, _, _)) = is_push {
                         let escaped = j..j + ch.len_utf8();
                         tokens.body.push(
-                            data.body(BodyType::Section, till_backslash)
+                            data.token(BodyType::Section, till_backslash)
                         );
                         tokens.body.push(
-                            data.body(BodyType::Section, escaped)
+                            data.token(BodyType::Section, escaped)
                         );
                     }
                     data.body_capacity += 2;
@@ -412,7 +412,7 @@ define_syntax! {
             data.cursor.move_to(data.rindex);
 
             if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, till_bracket));
+                tokens.body.push(data.token(BodyType::Section, till_bracket));
             }
             data.body_capacity += 1;
             //Ok((0, 0, 1))
@@ -431,8 +431,8 @@ define_syntax! {
             let brackets = data.cursor.move_to(data.rindex);
 
             if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, till_bracket));
-                tokens.body.push(data.body(BodyType::ChoiceClose, brackets));
+                tokens.body.push(data.token(BodyType::Section, till_bracket));
+                tokens.body.push(data.token(BodyType::ChoiceClose, brackets));
             }
             data.body_capacity += 2;
             //Ok((0, 0, 2))
@@ -445,7 +445,7 @@ define_syntax! {
                     data.cursor.move_to(data.rindex);
 
                     if let Some((tokens, _, _)) = is_push {
-                        tokens.body.push(data.body(BodyType::Section, till_backslash));
+                        tokens.body.push(data.token(BodyType::Section, till_backslash));
                         // Do not push '\n'
                     }
                     data.body_capacity += 1;
@@ -455,8 +455,8 @@ define_syntax! {
                     let escaped = data.cursor.move_to(data.rindex);
 
                     if let Some((tokens, _, _)) = is_push {
-                        tokens.body.push(data.body(BodyType::Section, till_backslash));
-                        tokens.body.push(data.body(BodyType::Section, escaped));
+                        tokens.body.push(data.token(BodyType::Section, till_backslash));
+                        tokens.body.push(data.token(BodyType::Section, escaped));
                     }
                     data.body_capacity += 2;
                     //Ok((0, 0, 2))
@@ -471,8 +471,8 @@ define_syntax! {
             let till_comma = data.cursor.move_to(i);
             let comma = data.cursor.move_to(data.rindex);
             if let Some((tokens, _, _)) = is_push {
-                tokens.body.push(data.body(BodyType::Section, till_comma));
-                tokens.body.push(data.body(BodyType::ChoiceDelim, comma));
+                tokens.body.push(data.token(BodyType::Section, till_comma));
+                tokens.body.push(data.token(BodyType::ChoiceDelim, comma));
             }
             data.body_capacity += 2;
             //Ok((0, 0, 2))
@@ -531,14 +531,13 @@ impl<'filestr> Metadata<'filestr> {
         }
     }
 
-    fn head(&self, l: HeadType, range: Range<usize>) -> WithSpan<'filestr, HeadType> {
+    fn token<T>(&self, token: T, range: Range<usize>) -> WithSpan<'filestr, T> {
         let offset = self.original.len() - self.source.len();
-        WithSpan(l, self.original, offset + range.start..offset + range.end)
-    }
-
-    fn body(&self, l: BodyType, range: Range<usize>) -> WithSpan<'filestr, BodyType> {
-        let offset = self.original.len() - self.source.len();
-        WithSpan(l, self.original, offset + range.start..offset + range.end)
+        WithSpan {
+            data: token,
+            context: self.original,
+            range: offset + range.start..offset + range.end
+        }
     }
 
     fn report(&self, span: Range<usize>, message: &str) -> MarkupError {

@@ -6,25 +6,33 @@ use std::fmt;
 use std::ops::Range;
 
 #[derive(Clone, Debug)]
-pub struct WithSpan<'filestr, T>(pub T, pub &'filestr str, pub Range<usize>);
+pub struct WithSpan<'filestr, T> {
+    pub data: T,
+    pub context: &'filestr str,
+    pub range: Range<usize>,
+}
 
 impl<'filestr, T> WithSpan<'filestr, T> {
     pub fn to_error(&self, message: &str) -> MarkupError {
-        MarkupError::from_str(&self.1, self.as_str(), message.to_string())
+        MarkupError::from_str(&self.context, self.as_str(), message.to_string())
     }
 
     pub fn as_str(&self) -> &'filestr str {
-        &self.1[self.2.start..self.2.end]
+        &self.context[self.range.start..self.range.end]
     }
 
-    pub fn source(&self) -> &str {
-        self.1
+    pub fn map_to<U>(&self, new_value: U) -> WithSpan<'filestr, U> {
+        WithSpan {
+            data: new_value,
+            context: self.context,
+            range: self.range.clone(),
+        }
     }
 
     pub fn span_to_as_range(&self, to: &Self) -> (usize, usize) {
         // This an internal structure so debug_assert is fine
-        debug_assert_eq!(self.1, to.1);
-        (self.2.start, to.2.end)
+        debug_assert_eq!(self.context, to.context);
+        (self.range.start, to.range.end)
     }
 }
 
@@ -43,19 +51,19 @@ impl Cursor {
     }
 }
 
-pub type Hotkey<'owner> = &'owner [Chord];
+pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
 pub fn debug_hotkey_to_string(hotkey: Hotkey) -> String {
     hotkey
         .iter()
-        .map(|chord| chord.to_string())
+        .map(|chord_span| chord_span.data.to_string())
         .collect::<Vec<_>>()
         .join(" ; ")
 }
 
 #[derive(Debug)]
 pub struct Shortcut<'owner, 'filestr> {
-    pub hotkey: Hotkey<'owner>,
-    pub command: &'owner [&'filestr str],
+    pub hotkey: Hotkey<'owner, 'filestr>,
+    pub command: &'owner [WithSpan<'filestr, ()>],
 }
 impl<'owner, 'filestr> fmt::Display for Shortcut<'owner, 'filestr> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -63,15 +71,33 @@ impl<'owner, 'filestr> fmt::Display for Shortcut<'owner, 'filestr> {
         f.write_str(
             self.hotkey
                 .iter()
-                .map(|x| x.to_string())
+                .map(|x| x.data.to_string())
                 .collect::<Vec<_>>()
                 .join(" ; ")
                 .as_str(),
         )?;
         f.write_str("|")?;
-        f.write_str(self.command.join("").trim())
+        f.write_str(self.command.iter().map(|span| span.as_str()).collect::<Vec<_>>().join("").trim())
     }
 }
+
+
+impl<'owner, 'filestr> std::cmp::Ord for WithSpan<'filestr, Chord> {
+     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.data.cmp(&other.data)
+    }
+}
+impl<'owner, 'filestr> std::cmp::PartialOrd for WithSpan<'filestr, Chord> {
+     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.data.cmp(&other.data))
+    }
+}
+impl<'owner, 'filestr> std::cmp::PartialEq for WithSpan<'filestr, Chord> {
+     fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+impl<'owner, 'filestr> std::cmp::Eq for WithSpan<'filestr, Chord> {}
 
 type ChordModifiers = u8;
 

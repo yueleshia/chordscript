@@ -95,7 +95,7 @@ impl MarkupError {
 
     pub fn from_span_over<T>(from: &WithSpan<T>, till_inclusive: &WithSpan<T>, message: String) -> Self {
         Self {
-            source: from.source().to_string(),
+            source: from.context.to_string(),
             range: WithSpan::span_to_as_range(from, till_inclusive),
             message,
         }

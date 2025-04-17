@@ -30,7 +30,7 @@ fn interpret() {
 #| | echo asdf  # @TODO this should not be a lexer error
 #|super;| echo yo
 #|| echo yo
-#|super shift q|echo {{{1,2,3}}}
+#|super shift q|echo 1,2,3
 |super shift q|"#;
     //println!("{}", _file);
 
@@ -40,8 +40,7 @@ fn interpret() {
         //_lexemes.to_iter().for_each(debug_print_lexeme);
 
         let parsemes = parser::process(&_lexemes)?;
-        let mut _hotkeys = parsemes.make_owned_view();
-        //_hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+        //let mut _hotkeys = parsemes.make_owned_sorted_view();
         //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
         let _keyspaces = keyspace::process(&parsemes)?;
         keyspace::debug_print_keyspace_owner(&_keyspaces);
@@ -70,19 +69,18 @@ fn print_lexeme(lexeme: lexer::Lexeme) {
     use constants::{KEYCODES, MODIFIERS};
     use lexer::BodyType;
     use lexer::HeadType;
-    use structs::WithSpan;
 
     let head = lexeme
         .head
         .iter()
-        .filter_map(|head_lexeme| match head_lexeme {
-            WithSpan(HeadType::Mod(k), _, _) => Some(MODIFIERS[*k]),
-            WithSpan(HeadType::Key(k), _, _) => Some(KEYCODES[*k]),
-            WithSpan(HeadType::ChoiceBegin, _, _) => Some("{{"),
-            WithSpan(HeadType::ChoiceDelim, _, _) => Some(","),
-            WithSpan(HeadType::ChoiceClose, _, _) => Some("}}"),
-            WithSpan(HeadType::ChordDelim, _, _) => Some(";"),
-            WithSpan(HeadType::Blank, _, _) => None,
+        .filter_map(|head_lexeme| match head_lexeme.data {
+            HeadType::Mod(k) => Some(MODIFIERS[k]),
+            HeadType::Key(k) => Some(KEYCODES[k]),
+            HeadType::ChoiceBegin => Some("{{"),
+            HeadType::ChoiceDelim => Some(","),
+            HeadType::ChoiceClose => Some("}}"),
+            HeadType::ChordDelim => Some(";"),
+            HeadType::Blank => None,
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -90,16 +88,16 @@ fn print_lexeme(lexeme: lexer::Lexeme) {
     let body = lexeme
         .body
         .iter()
-        .map(|body_lexeme| match body_lexeme {
-            WithSpan(BodyType::Section, _, _) => body_lexeme
+        .map(|body_lexeme| match body_lexeme.data {
+            BodyType::Section => body_lexeme
                 .as_str()
                 .lines()
                 .map(|line| format!("{:?}", line))
                 .collect::<Vec<_>>()
                 .join("\n  "),
-            WithSpan(BodyType::ChoiceBegin, _, _) => "\n  {{\n    ".to_string(),
-            WithSpan(BodyType::ChoiceDelim, _, _) => ",\n    ".to_string(),
-            WithSpan(BodyType::ChoiceClose, _, _) => ",\n  }}\n  ".to_string(),
+            BodyType::ChoiceBegin => "\n  {{\n    ".to_string(),
+            BodyType::ChoiceDelim => ",\n    ".to_string(),
+            BodyType::ChoiceClose => ",\n  }}\n  ".to_string(),
         })
         .collect::<Vec<_>>()
         .join("");

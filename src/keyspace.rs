@@ -5,27 +5,27 @@ use std::cmp;
 use std::mem;
 use std::ops::Range;
 
-use crate::parser::HotkeyOwner;
+use crate::parser::ShortcutOwner;
 use crate::reporter::MarkupError;
-use crate::structs::{Chord, Cursor, Shortcut};
+use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
 
 /****************************************************************************
  * Token definitions
  ****************************************************************************/
 #[derive(Debug)]
-pub struct Keyspace<'parsemes> {
-    title: &'parsemes [Chord],
+pub struct Keyspace<'parsemes, 'filestr> {
+    title: &'parsemes [WithSpan<'filestr, Chord>],
     actions: Range<usize>,
 }
 
 #[derive(Debug)]
 pub enum Action<'parsemes, 'filestr> {
-    SetState(&'parsemes [Chord]),
-    Command(Chord, &'parsemes [&'filestr str]),
+    SetState(&'parsemes [WithSpan<'filestr, Chord>]),
+    Command(WithSpan<'filestr, Chord>, &'parsemes [WithSpan<'filestr, ()>]),
 }
 
 pub struct KeyspaceOwner<'parsemes, 'filestr> {
-    keyspaces: Vec<Keyspace<'parsemes>>,
+    keyspaces: Vec<Keyspace<'parsemes, 'filestr>>,
     all_actions: Vec<Action<'parsemes, 'filestr>>,
 }
 
@@ -33,9 +33,9 @@ pub struct KeyspaceOwner<'parsemes, 'filestr> {
  * Syntax
  ****************************************************************************/
 pub fn process<'parsemes, 'filestr>(
-    hotkey_owner: &'parsemes HotkeyOwner<'filestr>,
+    shortcut_owner: &'parsemes ShortcutOwner<'filestr>,
 ) -> Result<KeyspaceOwner<'parsemes, 'filestr>, MarkupError> {
-    let mut view = hotkey_owner.make_owned_view();
+    let mut view = shortcut_owner.make_owned_view();
     view.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
 
     //let hotkeys: &[Hotkey] = &view;
@@ -178,20 +178,25 @@ pub fn debug_print_keyspace_owner(
                 Action::SetState(name) => format!(
                     "set state {}",
                     name.iter()
-                        .map(|chord| format!("{}", chord))
+                        .map(|chord| format!("{}", chord.data))
                         .collect::<Vec<_>>()
                         .join(" ; ")
                 ),
-                Action::Command(chord, command) => format!("{} -> {:?}", chord, command.join("")),
+                Action::Command(chord, command) => format!(
+                    "{} -> {:?}",
+                    chord.data,
+                    command.iter().map(|with_span| with_span.as_str()).collect::<Vec<_>>().join("")
+                ),
             })
             .collect::<Vec<_>>()
             .join("\n  ");
+
         println!(
             "state {} {:?} {{\n  {}\n}}\n",
             len,
             title
                 .iter()
-                .map(|chord| format!("{}", chord))
+                .map(|chord| format!("{}", chord.data))
                 .collect::<Vec<_>>()
                 .join(" ; "),
             action_string,

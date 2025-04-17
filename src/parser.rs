@@ -14,26 +14,26 @@ use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
  * Structs
  ****************************************************************************/
 #[derive(Debug)]
-pub struct HotkeyOwner<'filestr> {
-    hotkeys: Vec<(Range<usize>, Range<usize>)>,
-    chords: Vec<Chord>,
-    scripts: Vec<&'filestr str>,
+pub struct ShortcutOwner<'filestr> {
+    shortcuts: Vec<(Range<usize>, Range<usize>)>,
+    chords: Vec<WithSpan<'filestr, Chord>>,
+    scripts: Vec<WithSpan<'filestr, ()>>,
 }
 
 type ShortcutView<'owner, 'filestr> = Vec<Shortcut<'owner, 'filestr>>;
 
 // @TODO Add verification for to catch e.g 'a;b' and 'a;b;c' hotkeys
 // Choose this API to meaningfully separate a sorted and original-order view
-// Also keeps the fields in 'HotkeyOwner' private
-impl<'filestr> HotkeyOwner<'filestr> {
-    // Renders the hotkeys from 'Range<usize>' into 'Hotkey'
+// Also keeps the fields in 'ShortcutOwner' private
+impl<'filestr> ShortcutOwner<'filestr> {
+    // Renders the shortcuts from 'Range<usize>' into 'Hotkey'
     pub fn make_owned_view<'owner>(&'owner self) -> Vec<Shortcut<'owner, 'filestr>> {
-        let mut hotkeys = Vec::with_capacity(self.hotkeys.len());
-        hotkeys.extend(self.hotkeys.iter().map(|(head, body)| Shortcut {
+        let mut shortcuts = Vec::with_capacity(self.shortcuts.len());
+        shortcuts.extend(self.shortcuts.iter().map(|(head, body)| Shortcut {
             hotkey: &self.chords[head.start..head.end],
             command: &self.scripts[body.start..body.end],
         }));
-        hotkeys
+        shortcuts
     }
 
     pub fn make_owned_sorted_view<'owner>(&'owner self) -> ShortcutView<'owner, 'filestr> {
@@ -48,7 +48,7 @@ impl<'filestr> HotkeyOwner<'filestr> {
  ****************************************************************************/
 pub fn process<'filestr>(
     lexeme_stream: &'filestr LexemeOwner<'filestr>,
-) -> Result<HotkeyOwner<'filestr>, MarkupError> {
+) -> Result<ShortcutOwner<'filestr>, MarkupError> {
     let (rendered_head_capacity, rendered_body_capacity, hotkey_capacity, partition_max) = {
         let mut rendered_head_capacity = 0;
         let mut rendered_body_capacity = 0;
@@ -61,14 +61,14 @@ pub fn process<'filestr>(
             //println!("Permutations: {}", head_data.space.permutations);
             //println!("Space: {}", head_data.space.items);
 
+            println!("{:?} {:?}", lexeme.body, head_data.space);
             rendered_head_capacity += head_data.space.items;
             rendered_body_capacity += body_data.space.items;
+            println!("{:?} {:?}", lexeme.body, head_data.space);
 
             hotkey_capacity += head_data.space.permutations;
             partition_max = cmp::max(partition_max, head_data.partition_count);
             partition_max = cmp::max(partition_max, body_data.partition_count);
-
-            //assert!(head_data.space.permutations >= body_data.space.permutations);
         }
         (
             rendered_head_capacity,
@@ -83,8 +83,8 @@ pub fn process<'filestr>(
         //permutations.link_to(arrangement);
         let head_generator = &mut Permutations::new(partition_max);
         let body_generator = &mut Permutations::new(partition_max);
-        let mut owner = HotkeyOwner {
-            hotkeys: Vec::with_capacity(hotkey_capacity),
+        let mut owner = ShortcutOwner {
+            shortcuts: Vec::with_capacity(hotkey_capacity),
             chords: Vec::with_capacity(rendered_head_capacity),
             scripts: Vec::with_capacity(rendered_body_capacity),
         };
@@ -108,46 +108,47 @@ pub fn process<'filestr>(
             }
         }
 
-        //debug_assert_eq!(hotkey_capacity, owner.hotkeys.len());
-        //debug_assert_eq!(rendered_body_capacity, owner.chords.len());
-        //debug_assert_eq!(rendered_head_capacity, owner.scripts.len());
+        debug_assert_eq!(hotkey_capacity, owner.shortcuts.len());
+        debug_assert_eq!(rendered_head_capacity, owner.chords.len());
+        println!("{:?} {}", rendered_body_capacity, owner.scripts.len());
+        //debug_assert_eq!(rendered_body_capacity, owner.scripts.len());
         owner
     };
 
-    verify_no_overlap(&parsemes)?;
+    //verify_no_overlap(&parsemes)?;
 
     Ok(parsemes)
 }
 
 // Verify that all hotkeys are accessible
 // e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
-fn verify_no_overlap(parsemes: &HotkeyOwner) -> Result<(), MarkupError> {
-    let sorted_shortcuts = parsemes.make_owned_sorted_view();
-    let mut iter = sorted_shortcuts.iter().map(|shortcut| shortcut.hotkey);
-
-    if let Some(first) = iter.next() {
-        iter.try_fold(first, |prev_hotkey, curr_hotkey| {
-            let prev_len = prev_hotkey.len();
-            let curr_len = curr_hotkey.len();
-            if curr_len >= prev_len && &curr_hotkey[0..prev_len] == prev_hotkey {
-                //MarkupError::from_span_over(
-                //    first,
-                //    &curr_hotkey[prev_len - 1])
-                //    "The hotkeys overlap with each other".to_string(),
-                //)
-                // @TODO
-                panic!(
-                    "These hotkeys overlap with each other\n{}\n{}",
-                    crate::structs::debug_hotkey_to_string(prev_hotkey),
-                    crate::structs::debug_hotkey_to_string(curr_hotkey),
-                );
-            }
-
-            Ok(curr_hotkey)
-        })?;
-    }
-    Ok(())
-}
+//fn verify_no_overlap(parsemes: &ShortcutOwner) -> Result<(), MarkupError> {
+//    let sorted_shortcuts = parsemes.make_owned_sorted_view();
+//    let mut iter = sorted_shortcuts.iter().map(|shortcut| shortcut.hotkey);
+//
+//    if let Some(first) = iter.next() {
+//        iter.try_fold(first, |prev_hotkey, curr_hotkey| {
+//            let prev_len = prev_hotkey.len();
+//            let curr_len = curr_hotkey.len();
+//            if curr_len >= prev_len && &curr_hotkey[0..prev_len] == prev_hotkey {
+//                //MarkupError::from_span_over(
+//                //    first,
+//                //    &curr_hotkey[prev_len - 1])
+//                //    "The hotkeys overlap with each other".to_string(),
+//                //)
+//                // @TODO
+//                panic!(
+//                    "These hotkeys overlap with each other\n{}\n{}",
+//                    crate::structs::debug_hotkey_to_string(prev_hotkey),
+//                    crate::structs::debug_hotkey_to_string(curr_hotkey),
+//                );
+//            }
+//
+//            Ok(curr_hotkey)
+//        })?;
+//    }
+//    Ok(())
+//}
 
 define_syntax! {
     parse_syntax | state: State
@@ -155,11 +156,10 @@ define_syntax! {
         (lexeme: Either)
     | -> (),
     Loop {
-        Either::H(WithSpan(HeadType::ChordDelim, _, _)) => metadata.partition_width += 1;
-        Either::B(WithSpan(BodyType::Section, _, _)) => metadata.partition_width += 1;
+        Either::H(HeadType::ChordDelim) => metadata.partition_width += 1;
+        Either::B(BodyType::Section) => metadata.partition_width += 1;
 
-        Either::H(WithSpan(HeadType::ChoiceBegin, _, _))
-        | Either::B(WithSpan(BodyType::ChoiceBegin, _, _)) => {
+        Either::H(HeadType::ChoiceBegin) | Either::B(BodyType::ChoiceBegin) => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(1, index);
                 // Skip HeadType::ChoiceBegin
@@ -172,12 +172,10 @@ define_syntax! {
             metadata.partition_count += 1;
         };
 
-        Either::H(WithSpan(HeadType::ChoiceDelim, _, _))
-        | Either::B(WithSpan(BodyType::ChoiceDelim, _, _)) =>
+        Either::H(HeadType::ChoiceDelim) | Either::B(BodyType::ChoiceDelim) =>
             metadata.choice_count += 1;
 
-        Either::H(WithSpan(HeadType::ChoiceClose, _, _))
-        | Either::B(WithSpan(BodyType::ChoiceClose, _, _))  => {
+        Either::H(HeadType::ChoiceClose) | Either::B(BodyType::ChoiceClose)  => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(metadata.choice_count + 1, index);
                 // Skip HeadType::ChoiceClose
@@ -208,9 +206,9 @@ define_syntax! {
 /****************************************************************************
  * Helpers
  ****************************************************************************/
-enum Either<'a, 'filestr> {
-    H(&'a WithSpan<'filestr, HeadType>),
-    B(&'a WithSpan<'filestr, BodyType>),
+enum Either<'a> {
+    H(&'a HeadType),
+    B(&'a BodyType),
 }
 
 #[derive(Debug)]
@@ -251,7 +249,7 @@ fn parse_lexeme(
                 &mut head_data,
                 i,
                 head_generator,
-                Either::H(head_lexeme),
+                Either::H(&head_lexeme.data),
             )
             //            println!("Head {:?}", head_data.space);
         })?;
@@ -260,7 +258,7 @@ fn parse_lexeme(
         &mut head_data,
         lexeme.head.len(),
         head_generator,
-        Either::H(&WithSpan(HeadType::Blank, "", 0..0)),
+        Either::H(&HeadType::Blank),
     )?;
 
     let mut body_data = Metadata::new();
@@ -274,7 +272,7 @@ fn parse_lexeme(
                 &mut body_data,
                 i,
                 body_generator,
-                Either::B(body_lexeme),
+                Either::B(&body_lexeme.data),
             )?;
 
             // 'space.permutations' only increases on BodyType::ChoiceClose
@@ -289,7 +287,7 @@ fn parse_lexeme(
         &mut body_data,
         lexeme.body.len(),
         body_generator,
-        Either::B(&WithSpan(BodyType::Section, "", 0..0)),
+        Either::B(&BodyType::Section),
     )?;
 
     Ok((head_data, body_data))
@@ -300,29 +298,19 @@ fn parse_lexeme(
 macro_rules! find_prev_from {
     ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
         $source.iter().enumerate().take($i).rfind(|(_, lexeme)|
-            matches!(*lexeme,
-                WithSpan($search_for, _, _)
-                $( | WithSpan($search_for2, _, _) )*
-            )
+            matches!(lexeme.data, $search_for $( | $search_for2 )*)
         ).unwrap()
     };
 }
 macro_rules! find_next_from {
     ($source:ident, $i:ident, $search_for:pat $(| $search_for2:pat)* ) => {
         $source.iter().enumerate().skip($i).find(|(_, lexeme)|
-            matches!(*lexeme,
-                WithSpan($search_for, _, _)
-                $( | WithSpan($search_for2, _, _) )*
-            )
+            matches!(lexeme.data, $search_for $( | $search_for2 )*)
         ).unwrap()
     };
 }
 
-
-//hotkeys: Vec<(Range<usize>, Range<usize>)>,
-//chords: Vec<Chord>,
-//scripts: Vec<&'filestr str>,
-impl<'filestr> HotkeyOwner<'filestr> {
+impl<'filestr> ShortcutOwner<'filestr> {
     fn push_arrangement(
         &mut self,
         Lexeme { head, body }: &Lexeme<'_, 'filestr>,
@@ -334,6 +322,7 @@ impl<'filestr> HotkeyOwner<'filestr> {
         debug_assert_eq!(body_arrangement.0.len(), body_arrangement.1.len());
 
         let (head_begin, body_begin) = (self.chords.len(), self.scripts.len());
+        let mut cursor = Cursor(0);
         let last_chord = head_arrangement
             .1
             .iter()
@@ -341,43 +330,51 @@ impl<'filestr> HotkeyOwner<'filestr> {
             .zip(head_arrangement.0.iter())
             .map(|(section, choice)| {
                 section
-                    .split(|l| matches!(l, WithSpan(HeadType::ChoiceDelim, _, _)))
+                    .split(|l| matches!(l.data, HeadType::ChoiceDelim))
                     .nth(*choice)
                     .unwrap() // Syntax guarantees 'choice'-th index
+                    .iter()
             })
-            .try_fold(Chord::new(), |chord, key_sequence| {
-                key_sequence.iter().try_fold(chord, |c, key| match key {
-                    WithSpan(HeadType::ChordDelim, _, _) => {
-                        self.chords.push(c);
+            .try_fold(Chord::new(), |o_chord, mut hotkey| {
+                hotkey.try_fold(o_chord, |chord, keyspan| match keyspan.data {
+                    HeadType::ChordDelim => {
+                        self.chords.push(WithSpan {
+                            data: chord,
+                            context: keyspan.context,
+                            range: cursor.move_to(keyspan.range.end),
+                        });
                         Ok(Chord::new())
                     }
-                    WithSpan(HeadType::Mod(_), _, _) => c.add(&key),
-                    WithSpan(HeadType::Key(_), _, _) => c.add(&key),
-                    WithSpan(HeadType::Blank, _, _) => Ok(c),
-                    _ => unreachable!("{}", key.to_error(errors::PANIC_NON_KEY)),
+                    HeadType::Mod(_) => chord.add(keyspan),
+                    HeadType::Key(_) => chord.add(keyspan),
+                    HeadType::Blank => Ok(chord),
+                    _ => unreachable!("{}", keyspan.to_error(errors::PANIC_NON_KEY)),
                 })
             })?;
 
         // If no hotkeys were built
         if last_chord == Chord::new() {
-            let range = head[0].span_to_as_range(head.last().unwrap());
-            return Err(if head_begin == self.chords.len() {
-                MarkupError::from_range(
-                    head[0].source(),
-                    (range.0 - 1, range.1 + 1), // include bars
-                    errors::EMPTY_HOTKEY.to_string(),
-                )
+            let last = &head.last().unwrap().range;
+            let range = if head_begin == self.chords.len() {
+                const BAR: usize = "|".len(); // Includes bars around head
+                (&head[0].range.start - BAR, last.end + BAR)
             } else {
                 let len = head.len();
                 let (index, _) = find_prev_from!(head, len, HeadType::ChordDelim);
-                MarkupError::from_range(
-                    head[0].source(),
-                    (head[index].2.start, range.1 + 1), // include bars
-                    errors::EMPTY_HOTKEY.to_string(),
-                )
-            });
+                (head[index].range.start, last.end)
+            };
+            return Err(MarkupError::from_range(
+                head[0].context,
+                range,
+                errors::EMPTY_HOTKEY.to_string(),
+            ));
         } else {
-            self.chords.push(last_chord);
+            let last_span = &head.last().unwrap();
+            self.chords.push(WithSpan {
+                data: last_chord,
+                context: last_span.context,
+                range: cursor.move_to(last_span.range.end),
+            });
         }
 
         body_arrangement
@@ -387,19 +384,19 @@ impl<'filestr> HotkeyOwner<'filestr> {
             .zip(body_arrangement.0.iter())
             .map(|(multiple_choice, choice)| {
                 multiple_choice
-                    .split(|l| matches!(l, WithSpan(BodyType::ChoiceDelim, _, _)))
+                    .split(|l| matches!(l.data, BodyType::ChoiceDelim))
                     .nth(*choice)
                     .unwrap() // Syntax guarantees 'choice'-th index
             })
             .for_each(|str_sections| {
-                str_sections.iter().for_each(|lexeme| match lexeme {
-                    WithSpan(BodyType::Section, _, _) => self.scripts.push(lexeme.as_str()),
+                str_sections.iter().for_each(|lexeme| match lexeme.data {
+                    BodyType::Section => self.scripts.push(lexeme.map_to(())),
                     _ => unreachable!("{}", lexeme.to_error(errors::PANIC_CHOICE_NON_SECTION)),
                 });
                 //println!("{:?}", str_sections)
             });
 
-        self.hotkeys.push((
+        self.shortcuts.push((
             head_begin..self.chords.len(),
             body_begin..self.scripts.len(),
         ));
@@ -409,27 +406,27 @@ impl<'filestr> HotkeyOwner<'filestr> {
 
 // These debug_asserts are guarantees by the syntax
 fn choice_count_error(body: &[WithSpan<BodyType>], i: usize) -> MarkupError {
-    debug_assert!(matches!(body[i],
-        WithSpan(BodyType::ChoiceDelim, _, _)
-            | WithSpan(BodyType::ChoiceClose, _, _)
+    debug_assert!(matches!(
+        body[i].data,
+        BodyType::ChoiceDelim | BodyType::ChoiceClose
     ));
 
     // BodyType::ChoiceDelim guaranteed to exist because we always start with
     // one permutation (i.e. choice of one is never an error)
     let (prev_delim, _) = find_prev_from!(body, i, BodyType::ChoiceDelim);
     debug_assert!(matches!(
-        body[prev_delim],
-        WithSpan(BodyType::ChoiceDelim, _, _) | WithSpan(BodyType::ChoiceBegin, _, _)
+        body[prev_delim].data,
+        BodyType::ChoiceDelim | BodyType::ChoiceBegin
     ));
 
     let (brackets, _) = find_next_from!(body, i, BodyType::ChoiceClose);
     debug_assert!(matches!(
-        body[i],
-        WithSpan(BodyType::ChoiceDelim, _, _) | WithSpan(BodyType::ChoiceClose, _, _)
+        body[i].data,
+        BodyType::ChoiceDelim | BodyType::ChoiceClose
     ));
 
     MarkupError::from_range(
-        body[i].source(),
+        body[i].context,
         WithSpan::span_to_as_range(&body[prev_delim + 1], &body[brackets - 1]),
         errors::TOO_MUCH_BODY.to_string(),
     )
@@ -437,17 +434,17 @@ fn choice_count_error(body: &[WithSpan<BodyType>], i: usize) -> MarkupError {
 
 impl Chord {
     fn add(mut self, lexeme: &WithSpan<HeadType>) -> Result<Self, MarkupError> {
-        match lexeme {
-            WithSpan(HeadType::Key(k), _, _) => {
+        match lexeme.data {
+            HeadType::Key(k) => {
                 if self.key >= KEYCODES.len() {
-                    self.key = *k;
+                    self.key = k;
                     Ok(self)
                 } else {
                     Err(lexeme.to_error("Only specify one key per chord"))
                 }
             }
-            WithSpan(HeadType::Mod(m), _, _) => {
-                let flag = 1 << *m;
+            HeadType::Mod(m) => {
+                let flag = 1 << m;
                 if self.modifiers & flag == 0 {
                     self.modifiers |= flag;
                     Ok(self)
