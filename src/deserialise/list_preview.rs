@@ -7,7 +7,7 @@ use super::DeserialisedChord;
 
 pub struct ListAll<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
 pub struct ListReal<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
-struct ListShortcut<'shortcuts, 'filestr>(Shortcut<'shortcuts, 'filestr>);
+pub struct ListShortcut<'shortcuts, 'filestr>(pub Shortcut<'shortcuts, 'filestr>);
 //pub struct ListIter<'parsemes, 'filestr: 'parsemes, T>(pub T)
 //    where T:  Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone;
 

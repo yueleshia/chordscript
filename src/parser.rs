@@ -12,9 +12,9 @@ use std::ops::Range;
 pub struct ShortcutOwner<'filestr> {
     //    // second Range<usize> will always be 0..0
     //chords: Vec<WithSpan<'filestr, Chord>>,
-    chords: Vec<Chord<'filestr>>,
+    pub chords: Vec<Chord<'filestr>>,
     scripts: Vec<WithSpan<'filestr, ()>>,
-    shortcuts: Vec<ShortcutPointer>,
+    pub shortcuts: Vec<ShortcutPointer>,
 }
 
 #[derive(Clone, Debug)]

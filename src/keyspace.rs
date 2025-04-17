@@ -6,7 +6,7 @@ use std::mem;
 use std::ops::Range;
 
 use crate::parser::ShortcutOwner;
-use crate::structs::{Chord, Cursor, Hotkey, Shortcut, WithSpan};
+use crate::structs::{Chord, Cursor, Hotkey, Shortcut};
 
 /****************************************************************************
  * Token definitions
@@ -21,14 +21,11 @@ struct KeyspaceRef<'parsemes, 'filestr> {
 #[derive(Debug)]
 pub enum Action<'parsemes, 'filestr> {
     SetState(Hotkey<'parsemes, 'filestr>),
-    Command(
-        WithSpan<'filestr, Chord>,
-        Shortcut<'parsemes, 'filestr>,
-    ),
+    Command(Chord<'filestr>, Shortcut<'parsemes, 'filestr>),
 }
 
 impl<'parsemes, 'filestr> Action<'parsemes, 'filestr> {
-    pub fn key_trigger(&self) -> &WithSpan<'filestr, Chord> {
+    pub fn key_trigger(&self) -> &Chord<'filestr> {
         match self {
             // Should always be at least one chord in title
             // There is no Action::SetState(&[])
@@ -54,6 +51,7 @@ impl<'parsemes, 'filestr> KeyspaceOwner<'parsemes, 'filestr> {
     }
 }
 
+//
 #[derive(Debug)]
 pub struct KeyspaceIter<'keyspaces, 'parsemes, 'filestr> {
     iter: std::slice::Iter<'keyspaces, KeyspaceRef<'parsemes, 'filestr>>,
@@ -81,103 +79,106 @@ impl<'keyspaces, 'parsemes, 'filestr> Iterator for KeyspaceIter<'keyspaces, 'par
 /****************************************************************************
  * Syntax
  ****************************************************************************/
-pub fn process<'parsemes, 'filestr>(
-    shortcut_owner: &'parsemes ShortcutOwner<'filestr>,
-) -> KeyspaceOwner<'parsemes, 'filestr> {
-    let view = shortcut_owner.make_owned_sorted_view();
-    let shortcut_len = view.len();
-    let max_depth = view
-        .iter()
+//run: cargo run keyspaces -c $XDG_CONFIG_HOME/rc/wm-shortcuts
+
+pub fn process<'parsemes, 'filestr>(shortcut_owner: &'parsemes ShortcutOwner<'filestr>)
+-> KeyspaceOwner<'parsemes, 'filestr>
+{
+    let shortcut_count = shortcut_owner.shortcuts.len();
+    let mut all_partition = Vec::with_capacity(shortcut_count);
+    all_partition.extend(shortcut_owner.to_iter().filter(|s| !s.is_placeholder));
+    let max_depth = shortcut_owner
+        .to_iter()
         .fold(0, |depth, shortcut| cmp::max(depth, shortcut.hotkey.len()));
-    let to_process_list = &mut Vec::with_capacity(shortcut_len);
-    let into_partitions = &mut Vec::with_capacity(shortcut_len);
 
-    to_process_list.push(&view[..]);
-    let (keyspace_capacity, action_capacity) = {
-        let mut capacity = (0, 0);
-        for col in 0..max_depth {
-            into_partitions.clear();
-            let mut partitions_cursor = Cursor(0);
-            for base in to_process_list.iter() {
-                partition_by_col_into(col, base, into_partitions);
-                let range = partitions_cursor.move_to(into_partitions.len());
-                if !into_partitions[range].is_empty() {
-                    capacity.0 += 1;
-                }
-            }
-            capacity.1 += into_partitions.len();
-            mem::swap(to_process_list, into_partitions);
-        }
-        capacity
-    };
+    let todo = &mut Vec::with_capacity(shortcut_count); // aka. left
+    let done = &mut Vec::with_capacity(shortcut_count); // aka. right
+    todo.push(&all_partition[..]); // Push a slice containing everything
 
-    let owner = {
-        let mut keyspaces = Vec::with_capacity(keyspace_capacity);
-        let mut all_actions = Vec::with_capacity(action_capacity);
-        let mut action_cursor = Cursor(0);
-        to_process_list.clear();
-        to_process_list.push(&view[..]);
+    // If a keyspace has > 1 action, then we are overestimating both
+    let action_max_capacity = shortcut_owner.chords.len();
+    // + 1 for the '[]' chord keyspace (i.e. just one chord press)
+    let keyspace_max_capacity = action_max_capacity - shortcut_count + 1;
 
+    let mut action_cursor = Cursor(0);
+    let mut all_actions = Vec::with_capacity(action_max_capacity);
+    let mut keyspaces = Vec::with_capacity(keyspace_max_capacity);
+    for col in 0..max_depth {
+        done.clear();
+        // 'split_by_col_into' continually adds to 'done' (clear only happens
+        // on the previous line, i.e. not within the for loop below)
+        //
+        // This prevents us from reprocessing 'right_partitions' (i.e. pushing
+        // 'Action' enums) already in 'done' added by previous
+        // 'split_by_col_into()' from 'left_partition' slices
+        //
+        // We cannot delete the previous 'right_partition' slices in 'done'
+        // because 'swap()' at the end
+        let mut right_cursor = Cursor(0);
 
-        //println!("{:?}", deserialise);
-        for col in 0..max_depth {
-            into_partitions.clear();
-            let mut partitions_cursor = Cursor(0);
-            for base in to_process_list.iter() {
-                partition_by_col_into(col, base, into_partitions);
-                let range = partitions_cursor.move_to(into_partitions.len());
-                let base_partitions = &into_partitions[range];
-                for partition in base_partitions.iter() {
-                    all_actions.push(partition_to_action(col, partition));
-                }
+        for left_partition in todo.iter() {
+            // Populates 'done' with a refined (more split) list of partitions
+            split_by_col_into(left_partition, col, done);
 
-                // If previous iteration only push a Action::Command, then 'base'
-                // is partitioned into null (not pushed to 'all_actions')
-                if !base_partitions.is_empty() {
-                    // Pre-calculating 'max_depth' ensures >= one partition every 'col'
-                    keyspaces.push(KeyspaceRef {
-                        title: &base[0].hotkey[0..col],
-                        actions: action_cursor.move_to(all_actions.len()),
-                    });
-                }
+            //println!("col({}) {} {:?}..{}", col, todo.len(), right_cursor, done.len());
+            // This deals with the right
+            let refinement = &done[right_cursor.move_to(done.len())];
+            for right_partition in refinement.iter() {
+                let first = &right_partition[0];
+                all_actions.push(if right_partition.len() == 1 && first.hotkey.len() == col + 1 {
+                    Action::Command(first.hotkey[col].clone(), first.clone())
+                } else {
+                    Action::SetState(&first.hotkey[0..col + 1])
+                });
             }
 
-            mem::swap(to_process_list, into_partitions);
+            // This deals with the left, must come after dealing with the right
+            //
+            // If previous iteration only push a Action::Command, then 'partition'
+            // is partitioned into null (not pushed to 'all_actions')
+            if !refinement.is_empty() {
+                // Pre-calculating 'max_depth' ensures >= one partition every 'col'
+                keyspaces.push(KeyspaceRef {
+                    title: &left_partition[0].hotkey[0..col],
+                    actions: action_cursor.move_to(all_actions.len()),
+                });
+            }
+
+            //use crate::deserialise::{KeyspaceAction, ListShortcut};
+            //use crate::deserialise::Print;
+            //    .map(|a| KeyspaceAction(a).to_string_custom())
+            //    .collect::<Vec<_>>()
+            //    .join("\n")
+            //);
+            //println!("{}\n----", b.iter()
+            //    .map(|a| ListShortcut(a.clone()).to_string_custom())
+            //    .collect::<Vec<_>>()
+            //    .join("\n"));
+
         }
 
-        //run: cargo run keyspaces -c $HOME/interim/hk/config.txt
-        debug_assert_eq!(shortcut_len, to_process_list.capacity());
-        debug_assert_eq!(shortcut_len, into_partitions.capacity());
-        debug_assert_eq!(keyspace_capacity, keyspaces.len());
-        debug_assert_eq!(action_capacity, all_actions.len());
+        mem::swap(todo, done);
+    }
+    debug_assert_eq!(shortcut_count, todo.capacity());
+    debug_assert_eq!(shortcut_count, done.capacity());
+    debug_assert_eq!(keyspace_max_capacity, keyspaces.capacity());
+    debug_assert_eq!(action_max_capacity, all_actions.capacity());
 
-        KeyspaceOwner {
-            keyspaces,
-            all_actions,
-        }
-    };
-    owner
+    KeyspaceOwner {
+        keyspaces,
+        all_actions,
+    }
 }
 
 /****************************************************************************
  * Control flow
  ****************************************************************************/
-fn partition_to_action<'parsemes, 'filestr>(
-    col: usize,
-    partition: &[Shortcut<'parsemes, 'filestr>],
-) -> Action<'parsemes, 'filestr> {
-    let first_shortcut = &partition[0];
-    let trigger = first_shortcut.hotkey[col].clone();
-    if partition.len() == 1 && first_shortcut.hotkey.len() == col + 1 {
-        Action::Command(trigger, first_shortcut.clone())
-    } else {
-        Action::SetState(&first_shortcut.hotkey[0..col + 1])
-    }
-}
-
-fn partition_by_col_into<'a, 'owner, 'filestr>(
-    col: usize,
+// Assumes 'hotkey[0..col]' are all shared for the 'input'
+// Splits the input list
+// Partition an object by chord
+fn split_by_col_into<'a, 'owner, 'filestr>(
     input: &'a [Shortcut<'owner, 'filestr>],
+    col: usize,
     into_store: &mut Vec<&'a [Shortcut<'owner, 'filestr>]>,
 ) {
     let first = input
@@ -192,7 +193,7 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
             partition
                 .iter()
                 .all(|shortcut| shortcut.hotkey.get(col).is_some()),
-            "Sorting guaranteed violated. Shortcuts from 'start_index'.. do not have enough chords"
+            "Sorting guarantee violated. Shortcuts from 'start_index'.. do not have enough chords"
         );
 
         let mut start_chord = &start_shortcut.hotkey[col];

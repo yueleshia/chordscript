@@ -9,7 +9,7 @@
 mod constants;
 mod deserialise;
 mod errors;
-//mod keyspace;
+mod keyspace;
 mod lexer;
 mod macros;
 mod parser;
@@ -25,7 +25,7 @@ const DESCRIPTION: &str = "\
 Hello
 ";
 
-//run: cargo run -- debug-shortcuts --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
+//run: cargo run -- keyspaces --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
 fn main() {
     let raw_args = std::env::args().collect::<Vec<_>>();
 
@@ -99,7 +99,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         (let $keyspace:ident = @keyspace $matches:ident) => {
             process!(let parse_output = @parse $matches);
             //let $keyspaces = keyspace::process(&$shortcuts);
-            let $keyspace = parse_output;
+            let $keyspace = keyspace::process(&parse_output);
         };
     }
 
@@ -115,12 +115,13 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             //i3_config.push_string_into(&mut buffer);
             //println!("{}", buffer);
         }
-        Some("shortcuts") => {
+        Some("shortcuts") | Some("shortcut") | Some("s") => {
             process!(let shortcuts = @parse matches);
             println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
         }
-        Some("keyspaces") => {
-            //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
+        Some("keyspaces") | Some("keyspace") | Some("k") => {
+            process!(let keyspaces = @keyspace matches);
+            println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
         }
         Some("sh") => {
             //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());

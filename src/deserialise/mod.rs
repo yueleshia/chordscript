@@ -9,18 +9,14 @@
 // Technically reporter.rs probably should also exist inside this
 
 macro_rules! reexport {
-    ($mod:ident::$struct:ident) => {
+    ($mod:ident ::*) => {
         mod $mod;
-        pub use $mod::$struct;
-    };
-    ($mod:ident::{$( $struct:ident ),*}) => {
-        mod $mod;
-        pub use $mod::{$( $struct ),*};
+        pub use $mod::*;
     };
 }
 
-//reexport!(keyspace_preview::KeyspacePreview); // Default printer
-reexport!(list_preview::{ListAll, ListReal}); // Default printer
+reexport!(keyspace_preview::*); // Default printer
+reexport!(list_preview::*); // Default printer
 //reexport!(shellscript::Shellscript); // For external file to be used by others
 //
 //reexport!(i3::I3); // No way to escape newlines, so should avoid this
