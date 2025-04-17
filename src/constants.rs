@@ -52,6 +52,8 @@ macro_rules! build_available_keys2 {
         $(
             pub const $var: $type = [$( $val, )*];
 
+            // Enum for remapping buttons to output strings
+            #[allow(dead_code)]
             #[repr(usize)]
             pub enum $Enum {
                 $( $Variant, )*

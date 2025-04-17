@@ -25,18 +25,17 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::precalculate_capacity_and_build;
 use crate::deserialise::{index_of_substr, Print};
-use crate::structs::WithSpan;
 
 // (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
 // 0.302 is an overestimate of log(10)/log(2) to err on side of bigger
 const USIZE_BASE_10_MAX_DIGITS: usize = mem::size_of::<usize>() * 8 * 302 / 1000 + 1;
-const DISPLAY_LIMIT: usize = 20;
-const ELLIPSIS: &str = " ...";
 
-#[test]
-fn limit_is_big_enough() {
-    assert!(DISPLAY_LIMIT >= ELLIPSIS.len())
-}
+//const DISPLAY_LIMIT: usize = 20;
+//const ELLIPSIS: &str = " ..."; // If we decide to column limit
+//#[test]
+//fn limit_is_big_enough() {
+//    assert!(DISPLAY_LIMIT >= ELLIPSIS.len())
+//}
 
 #[derive(Debug)]
 pub enum CliError {
@@ -76,18 +75,6 @@ impl MarkupError {
         Self {
             source: context.to_string(),
             range: index..index + span.len(),
-            message,
-        }
-    }
-
-    pub fn from_span_over<T>(
-        from: &WithSpan<T>,
-        till_inclusive: &WithSpan<T>,
-        message: String,
-    ) -> Self {
-        Self {
-            source: from.context.to_string(),
-            range: WithSpan::span_to_as_range(from, till_inclusive),
             message,
         }
     }
