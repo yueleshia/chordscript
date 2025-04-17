@@ -5,7 +5,7 @@ use crate::structs::{Chord, Shortcut, WithSpan};
 
 use std::ops::Range;
 
-//run: cargo build; time cargo run -- shortcuts-debug -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
+//run: cargo build; time cargo run -- shortcuts-all-debug -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
 // run: cargo test
 
 #[derive(Debug)]
@@ -17,8 +17,16 @@ pub struct ShortcutOwner<'filestr> {
     shortcuts: Vec<ShortcutPointer>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ShortcutPointer {
+    is_placeholder: bool,
+    head: Range<usize>,
+    body: Range<usize>,
+}
+
+
 impl<'filestr> ShortcutOwner<'filestr> {
-    pub fn sort(&mut self) {
+    fn sort(&mut self) {
         let shortcuts = &mut self.shortcuts;
         let chords = &self.chords;
         shortcuts.sort_by(|a, b| {
@@ -29,32 +37,68 @@ impl<'filestr> ShortcutOwner<'filestr> {
     }
 
     pub fn to_iter<'owner>(&'owner self) -> impl Iterator<Item = Shortcut<'owner, 'filestr>> {
-        self.shortcuts.iter()
-            .filter(|pointer| !pointer.is_placeholder)
-            .map(move |pointer| Shortcut {
-                hotkey: &self.chords[pointer.head.start..pointer.head.end],
-                command: &self.scripts[pointer.body.start..pointer.body.end],
-            })
-    }
-
-    pub fn to_placeholder_iter<'owner>(&'owner self) -> impl Iterator<Item = Shortcut<'owner, 'filestr>> {
-        self.shortcuts.iter()
-            .filter(|pointer| pointer.is_placeholder)
-            .map(move |pointer| Shortcut {
-                hotkey: &self.chords[pointer.head.start..pointer.head.end],
-                command: &self.scripts[pointer.body.start..pointer.body.end],
-            })
+        self.shortcuts.iter().map(move |pointer| Shortcut {
+            is_placeholder: pointer.is_placeholder,
+            hotkey: &self.chords[pointer.head.start..pointer.head.end],
+            command: &self.scripts[pointer.body.start..pointer.body.end],
+        })
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ShortcutPointer {
-    is_placeholder: bool,
-    head: Range<usize>,
-    body: Range<usize>,
+
+pub fn parse(input: LexOutput) -> ShortcutOwner {
+    let mut owner = parse_work(input);
+    owner.sort();
+    verify_no_overlap(&owner).unwrap();
+    owner
 }
 
-pub fn parse<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
+pub fn parse_unsorted(input: LexOutput) -> ShortcutOwner {
+    let mut owner = parse_work(input);
+    let original_order = owner.shortcuts.clone();
+    owner.sort();
+    verify_no_overlap(&owner).unwrap();
+    ShortcutOwner {
+        chords: owner.chords,
+        scripts: owner.scripts,
+        shortcuts: original_order,
+    }
+}
+
+// Verify that all hotkeys are accessible (and no duplicates)
+// e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
+//fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), MarkupError> {
+fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), String> {
+    let mut iter = sorted_shortcuts.to_iter();
+    if let Some(first) = iter.next() {
+        iter.try_fold(first, |prev, curr| {
+            let prev_len = prev.hotkey.len();
+            let curr_len = curr.hotkey.len();
+            //println!("{} {}", prev_len, curr_len);
+            //println!("{:?}", curr.hotkey[0].sources);//, curr.hotkey[1].sources);
+            if prev_len <= curr_len && prev.hotkey == &curr.hotkey[0..prev_len] {
+                let prev_hotkey = prev.hotkey.iter()
+                    .map(|chord| chord.sources.join(" "))
+                    .collect::<Vec<_>>()
+                    .join(" ; ");
+
+                let curr_hotkey = prev.hotkey.iter()
+                    .map(|chord| chord.sources.join(" "))
+                    .collect::<Vec<_>>()
+                    .join(" ; ");
+                Err(format!("{}\nconflicts with\n{}", prev_hotkey, curr_hotkey))
+            } else {
+                Ok(curr)
+            }
+        })?;
+    }
+    Ok(())
+}
+
+
+
+
+fn parse_work<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
     //let mut shortcuts: Vec<Chord> = Vec::with_capacity(input.head_aggregate_size);
     let (permutation_count, head_aggregate_size, body_aggregate_size) =
         input.entry_stats.iter().fold((0, 0, 0), |(a, b, c), s| {
@@ -63,11 +107,14 @@ pub fn parse<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
 
     // Allocate the memory
     let mut chords = vec![Chord::new(input.original); head_aggregate_size];
-    let mut scripts = vec![WithSpan {
-        data: (),
-        context: &input.original,
-        source: &input.original[0..0],
-    }; body_aggregate_size];
+    let mut scripts = vec![
+        WithSpan {
+            data: (),
+            context: &input.original,
+            source: &input.original[0..0],
+        };
+        body_aggregate_size
+    ];
     let mut shortcuts = vec![
         ShortcutPointer {
             is_placeholder: false,

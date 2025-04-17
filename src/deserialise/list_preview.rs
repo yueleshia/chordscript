@@ -18,8 +18,8 @@ const ESCAPE: [&str; 1] = ["'\\''"];
 // Mostly for the standard dump to STDOUT for debuging your config
 impl<'parsemes, 'filestr> Print for ListAll<'parsemes, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
-        let placeholders = self.0.to_placeholder_iter();
-        let reals = self.0.to_iter();
+        let placeholders = self.0.to_iter().filter(|sc| sc.is_placeholder);
+        let reals = self.0.to_iter().filter(|sc| !sc.is_placeholder);
     } {
         13 => buffer.push_str("Placeholders\n");
         11 => buffer.push_str("==========\n");
@@ -37,17 +37,19 @@ impl<'parsemes, 'filestr> Print for ListAll<'parsemes, 'filestr> {
 
 // The same as 'ListAllUnsorted' but without the placeholders
 impl<'parsemes, 'filestr> Print for ListReal<'parsemes, 'filestr> {
-    precalculate_capacity_and_build!(self, buffer {} {
+    precalculate_capacity_and_build!(self, buffer {
+        let reals = self.0.to_iter().filter(|sc| !sc.is_placeholder);
+    } {
         15 => buffer.push_str("Real Shortcuts\n");
         11 => buffer.push_str("==========\n");
-        self.0.to_iter().map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
-            => self.0.to_iter().for_each(|sc| ListShortcut(sc).push_string_into(buffer));
+        reals.map(|sc| ListShortcut(sc).string_len()).sum::<usize>()
+            => reals.for_each(|sc| ListShortcut(sc).push_string_into(buffer));
     });
 }
 
 impl<'shortcuts, 'filestr> Print for ListShortcut<'shortcuts, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
-        let Shortcut { hotkey, command } = self.0;
+        let Shortcut { hotkey, command, .. } = self.0;
         let mut hotkey = hotkey.iter();
         let first = hotkey.next().unwrap();
     } {

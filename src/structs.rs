@@ -107,6 +107,7 @@ pub type Hotkey<'owner, 'filestr> = &'owner [Chord<'filestr>];
 
 #[derive(Clone, Debug)]
 pub struct Shortcut<'owner, 'filestr> {
+    pub is_placeholder: bool,
     pub hotkey: Hotkey<'owner, 'filestr>,
     pub command: &'owner [WithSpan<'filestr, ()>],
 }

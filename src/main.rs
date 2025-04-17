@@ -18,7 +18,8 @@ mod structs;
 
 use deserialise::Print;
 use std::fs;
-use std::io::{self, Write};
+//use std::io::{self, Write};
+use std::io;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -83,6 +84,7 @@ macro_rules! subcommands {
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
         let lexemes = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
         let mut $shortcuts = parser::parse(lexemes);
+        //let mut $keyspaces = keyspace::process(&$shortcuts);
         //let $shortcuts = parser::process(lexemes).map_err(Errors::Parse)?;
         //let $keyspaces = keyspace::process(&$shortcuts);
     };
@@ -116,7 +118,6 @@ fn parse_args(args: &[String]) -> Result<(), Errors> {
                 //println!("{}", buffer);
             }
             "shortcuts" @shortcuts (true, false) => {
-                shortcuts.sort();
                 println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
             }
             "shortcuts-all-debug" @shortcuts (true, false) => {
