@@ -81,14 +81,15 @@ impl<'keyspaces, 'parsemes, 'filestr> Iterator for KeyspaceIter<'keyspaces, 'par
  ****************************************************************************/
 //run: cargo run keyspaces -c $XDG_CONFIG_HOME/rc/wm-shortcuts
 
+// Filters out the placeholders
 pub fn process<'parsemes, 'filestr>(shortcut_owner: &'parsemes ShortcutOwner<'filestr>)
 -> KeyspaceOwner<'parsemes, 'filestr>
 {
     let shortcut_count = shortcut_owner.shortcuts.len();
     let mut all_partition = Vec::with_capacity(shortcut_count);
     all_partition.extend(shortcut_owner.to_iter().filter(|s| !s.is_placeholder));
-    let max_depth = shortcut_owner
-        .to_iter()
+    let max_depth = all_partition
+        .iter()
         .fold(0, |depth, shortcut| cmp::max(depth, shortcut.hotkey.len()));
 
     let todo = &mut Vec::with_capacity(shortcut_count); // aka. left
