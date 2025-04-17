@@ -19,12 +19,12 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
-use std::{error, fmt, io, mem, ops::Range};
+use std::{error, fmt, mem, ops::Range};
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
-use crate::precalculate_capacity_and_build;
 use crate::deserialise::Print;
+use crate::precalculate_capacity_and_build;
 
 // (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
 // 0.302 is an overestimate of log(10)/log(2) to err on side of bigger
@@ -37,21 +37,21 @@ const USIZE_BASE_10_MAX_DIGITS: usize = mem::size_of::<usize>() * 8 * 302 / 1000
 //    assert!(DISPLAY_LIMIT >= ELLIPSIS.len())
 //}
 
-#[derive(Debug)]
-pub enum CliError {
-    Markup(MarkupError),
-    Io(io::Error),
-}
-
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            CliError::Markup(ref err) => f.write_str(err.to_string().as_str()),
-            CliError::Io(ref err) => f.write_str(err.to_string().as_str()),
-        }
-    }
-}
-impl error::Error for CliError {}
+//#[derive(Debug)]
+//pub enum CliError {
+//    Markup(MarkupError),
+//    Io(std::io::Error),
+//}
+//
+//impl fmt::Display for CliError {
+//    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//        match *self {
+//            CliError::Markup(ref err) => f.write_str(err.to_string().as_str()),
+//            CliError::Io(ref err) => f.write_str(err.to_string().as_str()),
+//        }
+//    }
+//}
+//impl error::Error for CliError {}
 
 #[derive(Debug)]
 pub struct MarkupError {
@@ -218,24 +218,21 @@ impl Print for MarkupError {
         };
 
         // Error marker for close line
+        row_digit_len => pad(buffer, row_digit_len, "");
+        " | ";
         if is_single_line {
-            row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
+            first_spaces + first_marker
         } else {
-            row_digit_len + " | ".len() + after_marker + '\n'.len_utf8()
+            after_marker
         } => if is_single_line {
-            pad(buffer, row_digit_len, "");
-            buffer.push_str(" | ");
             debug_assert!(" ".width_cjk() == 1);
             debug_assert!("^".width_cjk() == 1);
             for _ in 0..first_spaces { buffer.push(' '); }
             for _ in 0..first_marker { buffer.push('^'); }
-            buffer.push('\n');
         } else {
-            pad(buffer, row_digit_len, "");
-            buffer.push_str(" | ");
             for _ in 0..after_marker { buffer.push('^'); }
-            buffer.push('\n');
         };
+        "\n";
 
         // Closing padding for source code
         row_digit_len => pad(buffer, row_digit_len, "");
@@ -284,8 +281,7 @@ impl Print for MarkupError {
 // I want no-allocations version (mostly as an intellectual exercise)
 // similar to https://github.com/rust-lang/rust/blob/1.26.0/src/libcore/fmt/num.rs#L50-L98
 fn push_num(buffer: &mut String, digit_len: usize, mut num: usize) {
-    let mut temp: [u8; USIZE_BASE_10_MAX_DIGITS] =
-        unsafe { mem::MaybeUninit::uninit().assume_init() };
+    let mut temp: [u8; USIZE_BASE_10_MAX_DIGITS] = [0; USIZE_BASE_10_MAX_DIGITS];
     let mut curr = temp.len();
     let base = 10;
     loop {

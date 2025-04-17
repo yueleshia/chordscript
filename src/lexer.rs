@@ -484,11 +484,12 @@ match_and_build_escapes! {
 impl<'a> Fsm<'a> {
     // Including 'from_state' and 'into_state' so that when we inline, the
     // match statements will be optimised out
-    //
-    // TODO: Return fragment_len
     #[inline]
     fn change_state(&mut self, from_state: State, into_state: State) {
-        debug_assert!(matches!(&self.state, from_state));
+        debug_assert_eq!(
+            std::mem::discriminant(&self.state),
+            std::mem::discriminant(&from_state),
+        );
 
         #[cfg(debug_assertions)]
         match (&from_state, &into_state) {

@@ -7,6 +7,7 @@ macro_rules! build_slice_and_joined_str {
         [$($val:literal, )* ];
     ) => {
         pub const $str: &str = concat!("", $($val, ' ',)*);
+        #[allow(dead_code)]
         pub const $slice: $slicety = [$($val,)*];
     };
 }

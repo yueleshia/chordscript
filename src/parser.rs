@@ -70,7 +70,6 @@ pub fn parse_unsorted(input: LexOutput) -> Output<ShortcutOwner> {
     })
 }
 
-
 fn parse_main(input: LexOutput) -> Output<ShortcutOwner> {
     //println!("{:#?}", input.entry_stats);
     let (permutation_count, head_aggregate_size, body_aggregate_size) =
@@ -83,7 +82,7 @@ fn parse_main(input: LexOutput) -> Output<ShortcutOwner> {
     let mut scripts = vec![
         WithSpan {
             data: (),
-            context: &input.original,
+            context: input.original,
             source: &input.original[0..0],
         };
         body_aggregate_size

@@ -66,6 +66,7 @@ macro_rules! const_concat {
                             substr[base + i] = raw_str[i]
                         }
                     );
+                    #[allow(unused_variables)]
                     let base = base + $str.len();
                 )*
                 substr

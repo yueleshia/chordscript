@@ -5,9 +5,6 @@
 // run: cargo run -- i3-shell --config $XDG_CONFIG_HOME/rc/wm-shortcuts -s $HOME/interim/hk/script.sh
 
 //#![allow(dead_code)]
-#![allow(clippy::string_lit_as_bytes)]
-#![allow(clippy::uninit_assumed_init)]
-#![allow(clippy::mem_discriminant_non_enum)]
 
 mod constants;
 mod deserialise;

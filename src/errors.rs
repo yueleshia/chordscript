@@ -5,17 +5,22 @@
 pub mod lexer {
     use crate::const_concat;
 
-    pub const HEAD_INVALID_CLOSE: &str = "Unexpected bar '|'. Close the enumeration first with '}}'.";
+    pub const HEAD_INVALID_CLOSE: &str =
+        "Unexpected bar '|'. Close the enumeration first with '}}'.";
     pub const INVALID_LINE_START: &str = "Valid starting characters for a line are:\n\
         - '#' (comments),\n\
         - '!' (placeholders),\n\
         - '|' (commands)";
 
-    pub const EXCLAIM_IN_HEAD: &str = "You are currently defining a head, not a placeholder.  Did you mean to use '|' instead?";
-    pub const BAR_IN_PLACEHOLDER: &str = "You are currently defining a placeholder, not a head.  Did you mean to use '!' instead?";
-    pub const HEAD_NO_ESCAPING: &str = "You cannot escape characters with backslash '\\' in the hotkey definition portion.";
+    pub const EXCLAIM_IN_HEAD: &str =
+        "You are currently defining a head, not a placeholder.  Did you mean to use '|' instead?";
+    pub const BAR_IN_PLACEHOLDER: &str =
+        "You are currently defining a placeholder, not a head.  Did you mean to use '!' instead?";
+    pub const HEAD_NO_ESCAPING: &str =
+        "You cannot escape characters with backslash '\\' in the hotkey definition portion.";
 
-    pub const BODY_BRACKET_NO_NEWLINE_BAR: &str = "A '|' here conflicts with starting a new entry.  Close the enumeration first with '}}'.\n\
+    pub const BODY_BRACKET_NO_NEWLINE_BAR: &str =
+        "A '|' here conflicts with starting a new entry.  Close the enumeration first with '}}'.\n\
         If you want a '|' as the first character in line try:\n\
         - '\\n|' on the previous line or\n\
         - '\\|' escaping it on this line.";
@@ -31,7 +36,8 @@ pub mod lexer {
         "Missing a second closing curly brace. Need '}}' to close an enumeration";
     pub const EMPTY_HOTKEY: &str = "You cannot have an empty hotkey. You can comment this out by prefixing with '#' (This makes it part of the previous command and '#' marks comments in shellscript)";
 
-    pub const MORE_BODY_THAN_HEAD_PERMUTATIONS: &str = "The number of body permutations cannot exceed the number of head permutations.\n\
+    pub const MORE_BODY_THAN_HEAD_PERMUTATIONS: &str =
+        "The number of body permutations cannot exceed the number of head permutations.\n\
         Either delete the highlighted body portion or add more options for the head.\n\
         If you want a comma as a text, you escape like '\\,'.";
 
@@ -54,9 +60,10 @@ pub mod parser {
     use crate::const_concat;
     use crate::constants::AVAILABLE_KEYS;
 
-    const_concat!(const INVALID_KEY = "Not a valid key\n" => AVAILABLE_KEYS);
-    pub const HOTKEY_DUPLICATE: &str = "This hotkey is defined previously.";
-    pub const HOTKEY_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is already defined and will be recognised first.";
+    const_concat!(const INVALID_KEY = "Not a valid key. The valid keys are the \
+        following:\n    " => AVAILABLE_KEYS);
+    //pub const HOTKEY_DUPLICATE: &str = "This hotkey is defined previously.";
+    //pub const HOTKEY_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is already defined and will be recognised first.";
 }
 
 //pub const PANIC_NON_KEY: &str =
@@ -67,8 +74,6 @@ pub mod parser {
 //    "This hotkey is reserved for outer config into which we are embedding these shortcuts.";
 //pub const PLACEHOLDER_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is reserved and will be recognised first.";
 
-
-
 //pub const PLACEHOLDER_DUPLICATE: &str = "This hotkey is reserved for outer config into which we are embedding these shortcuts.";
 //pub const PLACEHOLDER_UNREACHABLE: &str = "This overall hotkey is not accessible because the part of the hotkey is reserved and will be recognised first.";
 
@@ -78,7 +83,11 @@ fn const_concat_real_example() {
     use crate::errors::parser;
 
     assert_eq!(
-        ["Not a valid key\n", AVAILABLE_KEYS].join(""),
+        [
+            "Not a valid key. The valid keys are the following:\n    ",
+            AVAILABLE_KEYS
+        ]
+        .join(""),
         parser::INVALID_KEY
     );
 }
