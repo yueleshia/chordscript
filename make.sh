@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# This is so we do not have to specify 'wm-shortcuts' through '--config'
+# And also helps with deleting the old generated text and inserting it into
+# the window manager's config
+
 NAME="$( basename "${0}"; printf a )"; NAME="${NAME%?a}"
 dir="$( dirname "${0}"; printf a )"; dir="${dir%?a}"
 cd "${dir}" || exit "$?"
@@ -9,28 +13,33 @@ SHORTCUTS="${XDG_CONFIG_HOME}/rc/wm-shortcuts"
 BEGIN_MARKER="########## automatically generated begin ##########"
 CLOSE_MARKER="########## automatically generated close ##########"
 
-
+#run: % sh
 main() {
   # Make sure we support all the subcommands
-  for command in $( run_parser 'subcommands' ); do
+
+  for command in $( DEBUG='false' run_parser 'subcommands' ); do
     DEBUG='true' my_make "${command}"
   done
 
   TEMP="$( mktemp )"
   trap "rm -f \"${TEMP}\"" EXIT
-  DEBUG='false' my_make i3
+  DEBUG='false' my_make "$@"
 }
 
 my_make() {
   case "${1}"
     # @TODO implement -r/--runner
-    in i3) parse "${XDG_CONFIG_HOME}/i3/config" i3-shell \
-      -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" #-r "shortcuts.sh"
-    ;; sh|shortcuts|shortcuts-debug|keyspaces)
-      parse "${XDG_CONIG_HOME}" "${1}" -c "${SHORTCUTS}"
+    in i3-shell)
+      parse "${XDG_CONFIG_HOME}/i3/config" i3-shell \
+        -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" #-r "shortcuts.sh"
+
+    ;; sh) run_parser sh -c "${SHORTCUTS}"
+    ;; d|d*|debug-shortcuts) run_parser debug-shortcuts -c "${SHORTCUTS}"
+    ;; s|shortcut|shortcuts) run_parser shortcuts -c "${SHORTCUTS}"
+    ;; k|keyspace|keyspaces) run_parser keyspace -c "${SHORTCUTS}"
     ;; *)
       if "${DEBUG}"
-        then die DEV 1 "'${1}' is needs to be supported by ${NAME}"
+        then die DEV 1 "'${1}' needs to be supported by ${NAME}"
         else die FATAL 1 "'${1}' is not a valid command"
       fi
   esac
@@ -73,6 +82,7 @@ replace_text_between_markers() {
 }
 
 run_parser() {
+  "${DEBUG}" && return
   cargo run -- "$@"
 }
 

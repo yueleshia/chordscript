@@ -33,13 +33,13 @@ fn main() {
     let mut options = getopts::Options::new();
     // Yes, we check for '-h' or '--help' twice
     options.optflag("h", "help", "Display a more detailed help menu");
-    options.reqopt(
+    options.optopt(
         "c",
         "config",
         "The file containing the shortcuts",
         "FILENAME",
     );
-    options.reqopt(
+    options.optopt(
         "s",
         "script",
         "A file that will hold the supporting shellscript to be used",
@@ -69,6 +69,7 @@ fn main() {
 enum Errors {
     Help,
     ShortHelp,
+    //MissingOption(String),
     Cli(getopts::Fail),
     Io(io::Error),
     Parse(reporter::MarkupError),
@@ -110,13 +111,27 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             let $keyspace = keyspace::process(&parse_output);
         };
     }
+    macro_rules! build_subcommands_list {
+        ($first_arg:expr => {
+            $($($subcommand:literal)|* => $do:expr,)*
+            @special-case
+            $($rest:tt)*
+        }) => {
+            match $first_arg {
+                $($(Some($subcommand))|* => $do)*
+                Some("subcommands") => {
+                    let list = ["debug-shortcuts", $($($subcommand,)*)*];
+                    println!("{}", list.join("\n"));
+                }
+                $($rest)*
 
-    match matches.free.get(0).map(String::as_str) {
-        //Some("i3") => {
-        //}
+                Some(_) => return Err(Errors::ShortHelp),
 
-        // Write to a shell script that i3 config will use
-        Some("i3-shell") => {
+            }
+        };
+    }
+    build_subcommands_list!(matches.free.get(0).map(String::as_str) => {
+        "i3-shell" => {
             let support_path = matches.opt_str("s").expect(
                 "Please specify a -s file for writing the shellscript that \
                 helps i3. We need this because if we included commands \
@@ -136,22 +151,26 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             buffer.clear();
             i3_config.push_string_into(&mut buffer);
             println!("{}", buffer);
-        }
-        Some("shortcuts") | Some("shortcut") | Some("s") => {
+        },
+        "shortcuts" | "shortcut" | "s" => {
             process!(let shortcuts = @parse matches);
             println!("{}", deserialise::ListReal(&shortcuts).to_string_custom());
-        }
-        Some("keyspaces") | Some("keyspace") | Some("k") => {
+        },
+        "keyspaces" | "keyspace" | "k" => {
             process!(let keyspaces = @keyspace matches);
             println!(
                 "{}",
                 deserialise::KeyspacePreview(&keyspaces).to_string_custom()
             );
-        }
-        Some("sh") => {
-            //println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
-        }
+        },
+        "sh" => {
+            process!(let shortcuts = @parse matches);
+            println!("{}", deserialise::Shellscript(&shortcuts).to_string_custom());
+        },
 
+        @special-case
+
+        // NOTE: Make sure to update 'list' in the macro
         Some("debug-shortcuts") | None => {
             process!(let lexemes = @lex matches);
             //lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
@@ -159,8 +178,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
         }
 
-        Some(_) => return Err(Errors::ShortHelp),
-    }
+    });
     Ok(())
 }
 
