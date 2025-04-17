@@ -1,8 +1,8 @@
 //run: cargo test -- --nocapture
 
 use crate::constants::{KEYCODES, MODIFIERS};
-use std::ops::Range;
 use std::fmt;
+use std::ops::Range;
 
 #[derive(Clone)]
 pub struct WithSpan<'filestr, T> {
@@ -14,7 +14,7 @@ pub struct WithSpan<'filestr, T> {
 impl<'filestr, T: fmt::Debug> fmt::Debug for WithSpan<'filestr, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("WithSpan")
-            .field("data", &self.data)
+            .field("chord", &self.data)
             .field("source", &self.source)
             .finish()
     }
@@ -35,12 +35,27 @@ impl Cursor {
     }
 }
 
-type ChordModifiers = u8;
+// @TODO: make this private when we strip out sources and context
+pub type ChordModifiers = u8;
+
+#[derive(Clone, Debug)]
+pub struct InnerChord {
+    pub key: usize,
+    pub modifiers: ChordModifiers,
+}
+
+impl InnerChord {
+    pub const fn new() -> Self {
+        Self {
+            key: KEYCODES.len(), // Invalid index, i.e.  means None
+            modifiers: 0,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Chord<'filestr> {
-    pub key: usize,
-    pub modifiers: ChordModifiers,
+    pub chord: InnerChord,
     pub sources: [&'filestr str; MODIFIERS.len() + 1],
     pub context: &'filestr str,
 }
@@ -48,8 +63,7 @@ pub struct Chord<'filestr> {
 impl<'filestr> fmt::Debug for Chord<'filestr> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Chord")
-            .field("key", &self.key)
-            .field("modifiers", &self.modifiers)
+            .field("Chord", &self.chord)
             .field("sources", &self.sources)
             .finish()
     }
@@ -58,8 +72,7 @@ impl<'filestr> fmt::Debug for Chord<'filestr> {
 impl<'filestr> Chord<'filestr> {
     pub fn new(context: &'filestr str) -> Self {
         Self {
-            key: KEYCODES.len(), // Invalid index, i.e.  means None
-            modifiers: 0,
+            chord: InnerChord::new(),
             sources: [&context[0..0]; MODIFIERS.len() + 1],
             context,
         }
@@ -75,8 +88,8 @@ impl<'filestr> Chord<'filestr> {
 
 impl<'filestr> std::cmp::Ord for Chord<'filestr> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.key.cmp(&other.key) {
-            std::cmp::Ordering::Equal => self.modifiers.cmp(&other.modifiers),
+        match self.chord.key.cmp(&other.chord.key) {
+            std::cmp::Ordering::Equal => self.chord.modifiers.cmp(&other.chord.modifiers),
             a => a,
         }
     }
@@ -88,15 +101,15 @@ impl<'filestr> std::cmp::PartialOrd for Chord<'filestr> {
 }
 impl<'filestr> std::cmp::PartialEq for Chord<'filestr> {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key && self.modifiers == other.modifiers
+        self.chord.key == other.chord.key && self.chord.modifiers == other.chord.modifiers
     }
 }
 impl<'filestr> std::cmp::Eq for Chord<'filestr> {}
 
 #[test]
 fn chord_modifiers_big_enough() {
-    use std::mem;
     use crate::constants::MODIFIERS;
+    use std::mem;
 
     let modifier_size = mem::size_of::<ChordModifiers>() * 8;
     assert!(

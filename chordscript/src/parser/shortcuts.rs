@@ -314,8 +314,8 @@ impl<'filestr> Chord<'filestr> {
         //println!("{}", self);
         if let Some(m) = MODIFIERS.iter().position(|m| *m == key) {
             let as_flag = 1 << m;
-            if self.modifiers & as_flag == 0 {
-                self.modifiers |= as_flag;
+            if self.chord.modifiers & as_flag == 0 {
+                self.chord.modifiers |= as_flag;
                 self.sources[keys_added + 1] = key;
                 Ok(())
             } else {
@@ -327,8 +327,8 @@ impl<'filestr> Chord<'filestr> {
             }
         //println!("{}", as_flag);
         } else if let Some(k) = KEYCODES.iter().position(|k| *k == key) {
-            if self.key == KEYCODES.len() {
-                self.key = k;
+            if self.chord.key == KEYCODES.len() {
+                self.chord.key = k;
                 self.sources[0] = key;
                 Ok(())
             } else {

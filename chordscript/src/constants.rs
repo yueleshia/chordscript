@@ -55,6 +55,13 @@ macro_rules! build_available_keys {
             pub enum $Enum {
                 $( $Variant, )*
             }
+
+            impl $Enum {
+                #[allow(dead_code)]
+                pub const fn id(&self) -> usize {
+                    unsafe { *(self as *const Self as *const usize) }
+                }
+            }
         )*
         pub const AVAILABLE_KEYS: &str =
             build_available_keys!(@join $( $( $val, )* )*);

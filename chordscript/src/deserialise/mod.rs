@@ -33,7 +33,7 @@ use std::cmp;
 
 use crate::constants::{KEYCODES,MODIFIERS};
 use crate::precalculate_capacity_and_build;
-use crate::structs::{Chord, Cursor, WithSpan};
+use crate::structs::{InnerChord, Chord, Cursor, WithSpan};
 
 
 /****************************************************************************
@@ -364,7 +364,7 @@ pub struct DeserialisedChord<'list, 'filestr>(
 impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
         let DeserialisedChord(delim, chord, keycodes, modifiers) = self;
-        let Chord { key, modifiers: mods, .. } = chord;
+        let InnerChord { key, modifiers: mods } = chord.chord;
         let mut mod_iter = modifiers.iter().enumerate()
             .filter(|(i, _)| mods & (1 << i) != 0);
         let first = mod_iter.next();
@@ -382,15 +382,15 @@ impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
 
 
         // Then the key itself
-        if *key < keycodes.len() {
-            keycodes[*key].len() + if first.is_some() { delim.len() } else { 0 }
+        if key < keycodes.len() {
+            keycodes[key].len() + if first.is_some() { delim.len() } else { 0 }
         } else {
             0
-        } => if *key < keycodes.len() {
+        } => if key < keycodes.len() {
              if first.is_some() {
                  buffer.push_str(delim);
              }
-             buffer.push_str(keycodes[*key]);
+             buffer.push_str(keycodes[key]);
         };
     });
 }
