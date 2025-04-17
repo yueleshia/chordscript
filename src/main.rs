@@ -61,7 +61,8 @@ macro_rules! subcommands {
     };
 
     (@shortcuts $args:ident $pargs:ident($( $bool:ident ),*) $shortcuts:ident $_:ident) => {
-        let $pargs = options($( $bool ),*).parse($args).map_err(Errors::Cli)?;
+        let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
+            .map_err(Errors::Cli)?;
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
         let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
         let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
@@ -71,7 +72,8 @@ macro_rules! subcommands {
         $args:ident $pargs:ident($( $bool:ident ),*)
         $shortcuts:ident $keyspaces:ident
     ) => {
-        let $pargs = options($( $bool ),*).parse($args).map_err(Errors::Cli)?;
+        let $pargs = options(OptState::Process, $( $bool ),*).parse($args)
+            .map_err(Errors::Cli)?;
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
         let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
         let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
@@ -79,12 +81,12 @@ macro_rules! subcommands {
     };
 }
 
-//run: cargo run -- list-debug --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
+//run: cargo run -- shortcuts-debug --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
 fn parse_args(args: &[String]) -> Result<(), Errors> {
     let program = &args[0];
     let args = &args[1..];
     let pargs = {
-        let opts = options(false, false);
+        let opts = options(OptState::DetectHelp, false, false);
         let pargs = opts.parse(args).map_err(Errors::Cli)?;
         if pargs.opt_present("h") {
             println!("{}\n{}", program, opts.usage(DESCRIPTION));
@@ -129,6 +131,12 @@ fn parse_args(args: &[String]) -> Result<(), Errors> {
  * Helpers
  ****************************************************************************/
 
+enum OptState {
+    DetectHelp,
+    Process,
+
+}
+
 fn add(opts: &mut getopts::Options, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
     if is_required {
         opts.reqopt(a, b, c, d);
@@ -137,19 +145,29 @@ fn add(opts: &mut getopts::Options, is_required: bool, a: &str, b: &str, c: &str
     }
 }
 
-fn options(need_config: bool, need_script: bool) -> getopts::Options {
+fn add2(opts: &mut getopts::Options, state: &OptState, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
+    match (state, is_required) {
+        (OptState::DetectHelp, _) => opts.optopt(a,b,c,d),
+        (OptState::Process, true) => opts.reqopt(a, b, c, d),
+        (OptState::Process, false) => opts,
+    };
+}
+
+fn options(state: OptState, need_config: bool, need_script: bool) -> getopts::Options {
     let mut opts = getopts::Options::new();
     opts.optflag("h", "help", "print this help menu");
-    add(
+    add2(
         &mut opts,
+        &state,
         need_script,
         "s",
         "script",
         "File to output a shellscript",
         "FILENAME",
     );
-    add(
+    add2(
         &mut opts,
+        &state,
         need_config,
         "c",
         "config",

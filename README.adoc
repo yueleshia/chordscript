@@ -1,0 +1,101 @@
+This is a hand-written compiler that parsing an input language for specifying shortcuts and adapts to different window managers.
+This is inspired by the syntax of https://github.com/baskerville/sxhkd[sxhkd] which allows you to compactly and idiomatically specify hotkeys with slight variations.
+
+This will double check that you do you have duplicate or conflicting hotkeys.
+
+Currently we support the following window managers out of the box:
+
+* https://github.com/i3/i3[i3] or https://github.com/Airblader/i3[i3-gaps]
+* https://github.com/leftwm/leftwm[LeftWM] (WIP)
+* https://github.com/baskerville/sxhkd[sxhkd] (WIP)
+
+
+== Installation/Usage
+
+Note about i3 needing shellscript
+
+
+== Config Example
+
+[source]
+----
+|super d| dmenu_run
+!super + {{h,j,k,l}}! Reserve moving window manager
+|super space ; super + {{a, m, n}}| $TERMINAL -e {{alsamixer, neomutt, newsboat}}
+
+# Choose your ime
+# You can find these names at "$XDG_CONFIG_HOME/fcitx/profile
+|super + u ; super + {{1,2,3}}| fcitx-remote -s {{\
+  fcitx-keyboard-us-alt-intl-unicode,
+  mozc,
+  pinyin,
+}}
+----
+
+You can see my own config in https://github.com/Aryailia/dotfiles/blob/master/.config/rc/wm-shorcuts[my dotfiles git repo].
+
+== Language Syntax
+
+Also borrowing from sxhkd:
+
+* **Shortcut**: The combination of buttons to be pressed and the command to be executed in the form: `|Hotkey| Command`.
+The beginning `|` of  `|Hotkey|` must be at the beginning of a line, commands must use __literal groups__ to specify bars at the beginning of lines.
+Commands can theoretically be anything, but practically, all window managers run shellscripts.
+
+* **Placeholders**: Same as shortcuts but are not outputted and come in the form: `!Hotkey! Command`.
+These are useful for making sure your hotkeys do not conflict with hotkeys you reserved for hotkeys you specify directly in your window manager's config file.
+
+* **Permutation/Choice Group**: speicy `{{A, B, ..}}`. You can have more head commands than
+
+* **Comment**: Any line that begins with a `#`. (Nice when you want to comment out a permutation group)
+If the `#` is at the beginning of a line, this will be considered syntax, if there is whitespace before the `#`, this is part of the output shellscript (incidentally also a comment if not part of a https://tldp.org/LDP/abs/html/here-docs.html[here-document] or quote).
+
+* **Literal Group**: Directly input characters to the output shellscript: `{{{A, B, ..}}}`.
+
+* **Hotkey**: A list of one or more chords delimited by a semicolon, e.g. `super a`, `super Space ; super Return`.
+
+* **Chord**: A single key with modifiers (ctrl, super, etc.) that are delimited by spaces or `+`.
+
+This is the way to have a `#`, `!`, `|`, etc. at the beginning of your lines in your commands.
+
+Key names in the markup are following the `xev -event keyboard`, perhaps with some exceptions.
+
+== Design
+
+The general flow is :
+
+* link:src/main.rs[] handles parameter parsing with https://github.com/rust-lang/getopts[getopts].
+And is the entry point for reporting results (typically handled by link:src/deserialise[]) to STDOUT and errors to STDERR is handled by link:src/reporter.rs[].
+
+* link:src/lexer.rs[] is the first step of processing mostly responsible for identifying what is syntax, whitespace, and valid keys and converting them into a stream of lexemes.
+
+* link:src/parser.rs[] is the second step that is responsible for understanding the permutation syntax, expanding the lexemes into fully-realised arrangements that are then converted into valid hotkeys and associated actions.
+
+* link:src/keyspaces.rs[] is the optional third step that deals with window managers that do not support multi-chord hotkeys, and instead of have state.
+
+* link:src/deserialise[] represents adapting the output of either `parser.rs` or `keyspace.rs` to a specific window manager.
+
+
+This project also doubles as a means to learning parsing.
+
+Additionally this is an experiment in making a compiler/parser that preallocates the exact amount of memory required.
+This accomplished by running each compilation step twice, first for capacity, next to push into the array created with said capacity.
+
+For printing, I did do quick a benchmark test on adopting this two-step calculation base
+
+. allocating an easy to calculate max (e.g. lexeme capacity max = input char count)
+. exact pre-allocation
+. Allocating an empty string and allowing it to grow dynamically
+. Using a BufWriter for a STDOUT
+. Direct output to STDOUT
+
+(1), (2), and (4) seemed to be nearly identical in single-threaded speed, much faster than (3) and (5).
+Additionally, (2) is doubles as a second algorithm correctness check, therefore I decided to stick with implementing (2) and (4).
+
+
+== TODO
+
+* Shellscript API for adaptors (handling deserialisation)
+* Allow literal group inside of State::BodyBrackets
+* Fix Parser pre-allocation.
+* Shellscript work around if window manager implements state (see "mode" in i3wm) nor multi-chord hotkeys

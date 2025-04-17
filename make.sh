@@ -18,13 +18,14 @@ main() {
 
   TEMP="$( mktemp )"
   trap "rm -f \"${TEMP}\"" EXIT
-  #DEBUG='false' my_make i3
+  DEBUG='false' my_make i3
 }
 
 my_make() {
   case "${1}"
+    # @TODO implement -r/--runner
     in i3) parse "${XDG_CONFIG_HOME}/i3/config" i3 \
-      -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" -r "shortcuts.sh"
+      -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" #-r "shortcuts.sh"
     ;; sh|shortcuts|shortcuts-debug|keyspaces)
       parse "${XDG_CONIG_HOME}" "${1}" -c "${SHORTCUTS}"
     ;; *)
