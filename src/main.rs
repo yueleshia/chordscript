@@ -13,7 +13,7 @@ mod keyspace;
 mod lexer;
 mod macros;
 mod parser;
-//mod reporter;
+mod reporter;
 mod structs;
 
 use deserialise::Print;
@@ -49,7 +49,7 @@ fn main() {
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Debug(err)) => eprintln!("{}", err),
-        //Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
+        Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
     }
     std::process::exit(1);
 }
@@ -63,7 +63,7 @@ enum Errors {
     Cli(getopts::Fail),
     Io(io::Error),
     Debug(String),
-    //Parse(reporter::MarkupError),
+    Parse(reporter::MarkupError),
 }
 
 fn handle_help_flag(input: &[String]) -> Result<(), Errors> {
@@ -74,7 +74,7 @@ fn handle_help_flag(input: &[String]) -> Result<(), Errors> {
             _ => {}
         }
     }
-    if input[1..].len() == 0 {
+    if input[1..].is_empty() {
         Err(Errors::Help)
     } else {
         Ok(())
@@ -93,8 +93,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         };
         (let $shortcuts:ident = @parse $matches:ident) => {
             process!(let lex_output = @lex $matches);
-            let $shortcuts = parser::parse(lex_output);
-            //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
+            let $shortcuts = parser::parse(lex_output).map_err(Errors::Parse)?;
         };
         (let $keyspace:ident = @keyspace $matches:ident) => {
             process!(let parse_output = @parse $matches);
@@ -129,7 +128,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
 
         Some("debug-shortcuts") | None => {
             process!(let lexemes = @lex matches);
-            let shortcuts = parser::parse_unsorted(lexemes);
+            let shortcuts = parser::parse_unsorted(lexemes).map_err(Errors::Parse)?;
             println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
         }
 

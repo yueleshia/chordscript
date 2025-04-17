@@ -24,7 +24,7 @@ use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
 use crate::precalculate_capacity_and_build;
-use crate::deserialise::{index_of_substr, Print};
+use crate::deserialise::Print;
 
 // (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
 // 0.302 is an overestimate of log(10)/log(2) to err on side of bigger
@@ -62,6 +62,9 @@ pub struct MarkupError {
 
 impl error::Error for MarkupError {}
 
+fn index_of_substr(context: &str, substr: &str) -> usize {
+    (substr.as_ptr() as usize) - (context.as_ptr() as usize)
+}
 impl MarkupError {
     pub fn from_range(source: &str, range: Range<usize>, message: String) -> Self {
         Self {

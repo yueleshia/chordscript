@@ -1,11 +1,13 @@
 use crate::constants::KEYCODES;
 use crate::constants::MODIFIERS;
 use crate::lexer::{LexOutput, Lexeme, PostLexEntry};
+use crate::reporter::MarkupError;
 use crate::structs::{Chord, Shortcut, WithSpan};
 
 use std::ops::Range;
+type Output = Result<(), MarkupError>;
 
-//run: cargo build; time cargo run -- shortcuts-all-debug -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
+//run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
 // run: cargo test
 
 #[derive(Debug)]
@@ -23,7 +25,6 @@ pub struct ShortcutPointer {
     head: Range<usize>,
     body: Range<usize>,
 }
-
 
 impl<'filestr> ShortcutOwner<'filestr> {
     fn sort(&mut self) {
@@ -45,60 +46,30 @@ impl<'filestr> ShortcutOwner<'filestr> {
     }
 }
 
-
-pub fn parse(input: LexOutput) -> ShortcutOwner {
-    let mut owner = parse_work(input);
+/******************************************************************************
+ * Main Parse Workflow
+ ******************************************************************************/
+// Sorting is necessary for 'verify_no_overlap()'
+pub fn parse(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
+    let mut owner = parse_work(input)?;
     owner.sort();
     verify_no_overlap(&owner).unwrap();
-    owner
+    Ok(owner)
 }
 
-pub fn parse_unsorted(input: LexOutput) -> ShortcutOwner {
-    let mut owner = parse_work(input);
+// This
+pub fn parse_unsorted(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
+    let mut owner = parse_work(input)?;
     let original_order = owner.shortcuts.clone();
     owner.sort();
     verify_no_overlap(&owner).unwrap();
-    ShortcutOwner {
+    Ok(ShortcutOwner {
         chords: owner.chords,
         scripts: owner.scripts,
         shortcuts: original_order,
-    }
+    })
 }
-
-// Verify that all hotkeys are accessible (and no duplicates)
-// e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
-//fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), MarkupError> {
-fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), String> {
-    let mut iter = sorted_shortcuts.to_iter();
-    if let Some(first) = iter.next() {
-        iter.try_fold(first, |prev, curr| {
-            let prev_len = prev.hotkey.len();
-            let curr_len = curr.hotkey.len();
-            //println!("{} {}", prev_len, curr_len);
-            //println!("{:?}", curr.hotkey[0].sources);//, curr.hotkey[1].sources);
-            if prev_len <= curr_len && prev.hotkey == &curr.hotkey[0..prev_len] {
-                let prev_hotkey = prev.hotkey.iter()
-                    .map(|chord| chord.sources.join(" "))
-                    .collect::<Vec<_>>()
-                    .join(" ; ");
-
-                let curr_hotkey = prev.hotkey.iter()
-                    .map(|chord| chord.sources.join(" "))
-                    .collect::<Vec<_>>()
-                    .join(" ; ");
-                Err(format!("{}\nconflicts with\n{}", prev_hotkey, curr_hotkey))
-            } else {
-                Ok(curr)
-            }
-        })?;
-    }
-    Ok(())
-}
-
-
-
-
-fn parse_work<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
+fn parse_work(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
     //let mut shortcuts: Vec<Chord> = Vec::with_capacity(input.head_aggregate_size);
     let (permutation_count, head_aggregate_size, body_aggregate_size) =
         input.entry_stats.iter().fold((0, 0, 0), |(a, b, c), s| {
@@ -168,12 +139,14 @@ fn parse_work<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
         .map(|(stats, mut storage)| {
             let head = &lexemes[stats.head..stats.body];
             let body = &lexemes[stats.body..stats.tail];
-            parse_head_lex_into_chords(&mut storage, stats, head);
+            parse_head_lex_into_chords(&mut storage, stats, head)?;
             parse_body_lex_into_scripts(&mut storage, stats, body);
-            //(head, body)
+            //Ok((head, body))
+            Ok(())
         })
-        .for_each(|_| {});
-    //.for_each(|a| println!("{:?}\n{:?}\n----", a.0,a.1));
+        .find(Result::is_err)
+        //.for_each(|a| println!("{:?}\n{:?}\n----", a.0,a.1));
+        .unwrap_or(Ok(()))?;
 
     //chords.iter().for_each(|a| println!("{:?}", a.sources));
     //scripts.iter().for_each(|a| println!("{:?}", a.sources));
@@ -181,15 +154,66 @@ fn parse_work<'filestr>(input: LexOutput<'filestr>) -> ShortcutOwner<'filestr> {
 
     //            let body = body.iter().filter_map(|l| body_lexeme_to_str(i, l)).collect::<Vec<_>>().join("");
 
-    ShortcutOwner {
+    Ok(ShortcutOwner {
         chords,
         scripts,
         shortcuts,
-    }
+    })
 }
 
-fn partition_into_allocations() {}
+// Verify that all hotkeys are accessible (and no duplicates)
+// e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
+//fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), MarkupError> {
+fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), String> {
+    // Check 'sorted_shortcuts' is actually sorted
+    debug_assert!(
+        {
+            let mut temp = sorted_shortcuts.to_iter().collect::<Vec<_>>();
+            temp.sort_by(|a, b| a.hotkey.cmp(b.hotkey));
+            // We didn't impl 'partial_eq' for 'Shortcut' so do it manually
+            sorted_shortcuts
+                .to_iter()
+                .zip(temp)
+                .fold(true, |_, (a, b)| {
+                    a.hotkey == b.hotkey && a.command.as_ptr() == b.command.as_ptr()
+                })
+        },
+        "You did not sort the array"
+    );
 
+    let mut iter = sorted_shortcuts.to_iter();
+    if let Some(first) = iter.next() {
+        iter.try_fold(first, |prev, curr| {
+            let prev_len = prev.hotkey.len();
+            let curr_len = curr.hotkey.len();
+            //println!("{} {}", prev_len, curr_len);
+            //println!("{:?}", curr.hotkey[0].sources);//, curr.hotkey[1].sources);
+            if prev_len <= curr_len && prev.hotkey == &curr.hotkey[0..prev_len] {
+                let prev_hotkey = prev
+                    .hotkey
+                    .iter()
+                    .map(|chord| chord.sources.join(" "))
+                    .collect::<Vec<_>>()
+                    .join(" ; ");
+
+                let curr_hotkey = prev
+                    .hotkey
+                    .iter()
+                    .map(|chord| chord.sources.join(" "))
+                    .collect::<Vec<_>>()
+                    .join(" ; ");
+                Err(format!("{}\nconflicts with\n{}", prev_hotkey, curr_hotkey))
+            } else {
+                Ok(curr)
+            }
+        })?;
+    }
+    Ok(())
+}
+
+/******************************************************************************
+ * Head and Body Parse
+ ******************************************************************************/
 // If we  were to parallelize or rayon this, this setup is probably useful
 #[derive(Debug)]
 struct ThreadLocalStorage<'a, 'filestr> {
@@ -205,7 +229,7 @@ fn parse_head_lex_into_chords<'filestr>(
     storage: &mut ThreadLocalStorage<'_, 'filestr>,
     stats: &PostLexEntry,
     lexemes: &[Lexeme<'filestr>],
-) {
+) -> Output {
     let mut index = 0;
     let mut keys_added = 0;
     for i in 0..stats.permutations {
@@ -215,20 +239,20 @@ fn parse_head_lex_into_chords<'filestr>(
             let chord = &mut storage.head[index];
             match lexeme {
                 Lexeme::Key(k) => {
-                    chord.add(k, keys_added);
+                    chord.add(k, keys_added)?;
                     keys_added += 1;
                 }
                 Lexeme::HChoice(choice, k) if *choice == i => {
-                    chord.add(k, keys_added);
+                    chord.add(k, keys_added)?;
                     keys_added += 1;
                 }
                 Lexeme::ChordEndK(k) => {
-                    chord.add(k, keys_added);
+                    chord.add(k, keys_added)?;
                     keys_added = 0;
                     index += 1;
                 }
                 Lexeme::ChordEndHC(choice, k) if *choice == i => {
-                    chord.add(k, keys_added);
+                    chord.add(k, keys_added)?;
                     keys_added = 0;
                     index += 1;
                 }
@@ -240,6 +264,7 @@ fn parse_head_lex_into_chords<'filestr>(
         storage.shortcut[i].is_placeholder = stats.is_placeholder;
         storage.shortcut[i].head = (base + start)..(base + index);
     }
+    Ok(())
 }
 
 #[inline]
@@ -272,26 +297,40 @@ fn parse_body_lex_into_scripts<'a, 'filestr>(
 }
 
 impl<'filestr> Chord<'filestr> {
-    fn add(&mut self, key: &'filestr str, keys_added: usize) {
+    fn add(&mut self, key: &'filestr str, keys_added: usize) -> Output {
         //Result<Self, MarkupError> {
         if let Some(m) = MODIFIERS.iter().position(|m| *m == key) {
             let as_flag = 1 << m;
             if self.modifiers & as_flag == 0 {
                 self.modifiers |= as_flag;
                 self.sources[keys_added + 1] = key;
+                Ok(())
             } else {
-                panic!("You already specified this key {:?}", key);
+                Err(MarkupError::from_str(
+                    self.context,
+                    key,
+                    "Modifier already used".into(),
+                ))
             }
         //println!("{}", as_flag);
         } else if let Some(k) = KEYCODES.iter().position(|k| *k == key) {
             if self.key == KEYCODES.len() {
                 self.key = k;
                 self.sources[0] = key;
+                Ok(())
             } else {
-                panic!("You already specified this key");
+                Err(MarkupError::from_str(
+                    self.context,
+                    key,
+                    "Key already used".into(),
+                ))
             }
         } else {
-            panic!("Keycode not supported {}", key);
+            Err(MarkupError::from_str(
+                self.context,
+                key,
+                "Keycode not supported".into(),
+            ))
         }
     }
 }

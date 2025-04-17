@@ -71,6 +71,13 @@ impl<'filestr> Chord<'filestr> {
     }
 }
 
+#[cfg(debug_assertions)]
+impl<'filestr> std::fmt::Display for Chord<'filestr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} {}: {:?}", self.modifiers, self.key, self.sources)
+    }
+}
+
 impl<'filestr> std::cmp::Ord for Chord<'filestr> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.key.cmp(&other.key) {
