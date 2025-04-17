@@ -46,13 +46,9 @@ impl Consumer for io::Stdout {
         }
     }
 }
-impl Consumer for io::Stderr {
+impl Consumer for std::fmt::Formatter<'_> {
     fn consume(&mut self, part: &str) {
-        use io::Write;
-        match self.write_all(part.as_bytes()) {
-            Ok(()) => {}
-            Err(_) => unreachable!(),
-        }
+        self.write_str(part).unwrap()
     }
 }
 

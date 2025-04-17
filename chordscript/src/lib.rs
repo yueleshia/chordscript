@@ -3,7 +3,6 @@
 //#![allow(dead_code)]
 
 mod constants;
-mod deserialise;
 mod errors;
 mod macros;
 pub mod parser;
@@ -31,9 +30,9 @@ fn on_file() {
     // the quickest check to see if we altered the algorithm significantly
     println!("~~~~\n{}", _shortcuts.to_iter().count());
     let mut lock = std::io::stdout();
-    let ty = templates::Templates::ShellScript;
-    ty.pipe_string(&_shortcuts, &mut String::with_capacity(ty.len(&_shortcuts)));
-    ty.pipe_stdout(&_shortcuts, &mut lock);
+    let fmt = templates::Templates::ShellScript;
+    fmt.pipe_string(&_shortcuts, &mut String::with_capacity(fmt.len(&_shortcuts)));
+    fmt.pipe_stdout(&_shortcuts, &mut lock);
     println!("~~~~");
     //let _keyspaces = keyspace::process(&_shortcuts);
     //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
@@ -90,8 +89,7 @@ fn _interpret() {
         //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
         Ok(())
     })() {
-        use crate::deserialise::Print;
-        println!("{}", err.to_string_custom());
+        eprintln!("{}", err);
     }
 }
 

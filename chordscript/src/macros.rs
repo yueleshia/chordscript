@@ -6,57 +6,6 @@
 
 // This macro is for ergonomics, capacity and str can be specified on one line
 // This then calculates total capacity, allocates, then pushes
-#[macro_export]
-macro_rules! precalculate_capacity_and_build {
-    ($this:ident, $buffer:ident {
-        $( $init:stmt; )*
-    } {
-        $( $stmts:tt )*
-    }) => {
-        fn string_len(&$this) -> usize {
-            $( $init )*
-            let capacity = precalculate_capacity_and_build!(@size $($stmts)*);
-            capacity
-        }
-        fn push_string_into(&$this, $buffer: &mut String) {
-            //#[cfg(debug_assertions)]
-            //debug_assert!({ $this.to_string_custom(); true });
-            $( $init )*
-            precalculate_capacity_and_build!($buffer @push $($stmts)*);
-        }
-
-        #[cfg(debug_assertions)]
-        fn to_string_custom(&$this) -> String {
-            $( $init )*
-            let capacity = $this.string_len();
-            let mut owner = String::with_capacity(capacity);
-            let $buffer = &mut owner;
-            precalculate_capacity_and_build!($buffer @push $($stmts)*);
-            debug_assert_eq!(capacity, $buffer.len(),
-                "Pre-calculated capacity is incorrect.");
-            owner
-        }
-    };
-
-    (@size $size:expr => $push:expr; $($rest:tt)*) => {
-        $size + precalculate_capacity_and_build!(@size $($rest)*)
-    };
-    (@size $str:expr; $($rest:tt)*) => {
-        $str.len() + precalculate_capacity_and_build!(@size $($rest)*)
-    };
-    (@size) => { 0 };
-
-    ($buffer:ident @push $size:expr => $push:expr; $($rest:tt)*) => {
-        $push;
-        precalculate_capacity_and_build!($buffer @push $($rest)*);
-    };
-    ($buffer:ident @push $str:literal; $($rest:tt)*) => {
-        $buffer.push_str($str);
-        precalculate_capacity_and_build!($buffer @push $($rest)*);
-    };
-    ($buffer:ident @push) => { 0 };
-}
-
 // A way specify length of what is pushed and do the pushing side-by-side
 #[macro_export]
 macro_rules! sidebyside_len_and_push {

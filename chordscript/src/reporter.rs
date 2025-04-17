@@ -19,16 +19,13 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
-use std::{error, fmt, mem, ops::Range};
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
-use crate::deserialise::Print;
-use crate::precalculate_capacity_and_build;
+use std::{error, fmt};
 
-// (64 * 3 / 10 + 1 = 20) 20 for 64bit, (32 * 3 / 10 + 1 = 10) 10 for 32bit
-// 0.302 is an overestimate of log(10)/log(2) to err on side of bigger
-const USIZE_BASE_10_MAX_DIGITS: usize = mem::size_of::<usize>() * 8 * 302 / 1000 + 1;
+use crate::sidebyside_len_and_push;
+use crate::templates::{Consumer, PreallocLen, PreallocPush};
 
 //const DISPLAY_LIMIT: usize = 20;
 //const ELLIPSIS: &str = " ..."; // If we decide to column limit
@@ -56,51 +53,21 @@ const USIZE_BASE_10_MAX_DIGITS: usize = mem::size_of::<usize>() * 8 * 302 / 1000
 #[derive(Debug)]
 pub struct MarkupError {
     source: String,
-    range: Range<usize>,
+    range: (usize, usize),
     message: String,
 }
 
 impl error::Error for MarkupError {}
 
-fn index_of_substr(context: &str, substr: &str) -> usize {
-    (substr.as_ptr() as usize) - (context.as_ptr() as usize)
-}
 impl MarkupError {
     pub fn from_str<'a>(context: &'a str, span: &'a str, message: String) -> Self {
-        let index = index_of_substr(context, span);
+        let index = (span.as_ptr() as usize) - (context.as_ptr() as usize);
         Self {
             source: context.to_string(),
-            range: index..index + span.len(),
+            range: (index, index + span.len()),
             message,
         }
     }
-}
-
-fn convert_to_row_indices(
-    source: &str,
-    Range {
-        start: begin,
-        end: close,
-    }: Range<usize>,
-) -> (usize, usize, usize, usize) {
-    assert!(begin <= close, "Range is out of order");
-
-    let (_, r0, c0, r1, c1) = source.lines().take(source.lines().count() - 1).fold(
-        (0, 0, begin, 0, close),
-        |(i, r0, c0, r1, c1), line| {
-            let len = line.len(); //+ '\n'.len_utf8();
-            let next_line = i + len + 1;
-            (
-                next_line,
-                if begin >= next_line { r0 + 1 } else { r0 },
-                if begin >= next_line { c0 - len } else { c0 },
-                // At the end, `next_line = source.len() + 1`, so > is fine
-                if close > next_line { r1 + 1 } else { r1 },
-                if close > next_line { c1 - len } else { r1 },
-            )
-        },
-    );
-    (r0, c0, r1, c1)
 }
 
 //#[test]
@@ -123,168 +90,128 @@ fn convert_to_row_indices(
 //    println!();
 //}
 
-// 'index' is offset from the beginning of 'line' (might exceed 'line.len()')
-//
-fn line_offset_to_width(context: &str, line: &str, index: usize) -> usize {
-    let base_index = index_of_substr(context, line);
-    let offset = index - base_index;
-    let line_len = line.len();
-    if offset < line_len {
-        line[0..offset].width_cjk()
-    } else {
-        line.width_cjk() + offset - line_len
-    }
-}
-
 // @TODO Delegating print source and rows to error enum `CliError`
 impl fmt::Display for MarkupError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let buffer = &mut String::with_capacity(self.string_len());
-        self.push_string_into(buffer);
-        f.write_str(buffer.as_str())
+        //let buffer = &mut String::with_capacity(self.string_len());
+        //self.push_string_into(buffer);
+        //f.write_str(buffer.as_str())
+        self.pipe((), f);
+
+        Ok(())
     }
 }
 
+/****************************************************************************
+ *
+ ****************************************************************************/
+type OutputType = ();
+//// @TODO: Add colour
+//enum OutputType {
+//    PosixShell,
+//    HTML,
+//}
 
-// @TODO: Convert this from precalculate... to just using rust built-ins, e.g. format_args!()
-//        This is a one-time cost
-impl Print for MarkupError {
-    precalculate_capacity_and_build!(self, buffer {
-        let Range { start: begin, end: close } = self.range;
-        let (r0, _, r1, _) = convert_to_row_indices(self.source.as_str(), begin..close);
-        let row_digit_len = count_digits(r1 + 1);
+impl PreallocLen<OutputType> for MarkupError {
+    fn len(&self, extra: OutputType) -> usize {
+        error_len(self, extra)
+    }
+}
+impl<U: Consumer> PreallocPush<OutputType, U> for MarkupError {
+    fn pipe(&self, extra: OutputType, buffer: &mut U) {
+        error_pipe(self, extra, buffer);
+    }
+}
 
-        let is_single_line = r0 == r1;
-        let row_count = r1 - r0 + 1;
+sidebyside_len_and_push!(error_len, error_pipe<U>(me: &MarkupError, _extra: OutputType, buffer: U) {
+    let context = me.source.as_str();
 
-        let begin_line = self.source.lines().nth(r0).unwrap();
-        let close_line = self.source.lines().nth(r1).unwrap();
+    let mut iter = context.lines().enumerate().map(|(i, line)| {
+        ((line.as_ptr() as usize) - (context.as_ptr() as usize), i, line)
+    });
+    let (index, row, line) = iter.find(|(index, _, line)| me.range.0 < index + line.len() + "\n".len()).unwrap();
+    let start_row = ContextfulRow {
+        row_number: row,
+        highlight_index: me.range,
+        context_index: index,
+    };
+    let start_input = PaintInput {
+        row_number_max_len: count_digits(row),
+        line,
+        //word_wrap: 100,
+        message: &me.message,
+    };
+} {
+    start_row.len(start_input) => start_row.pipe(start_input, buffer);
 
-        let first_spaces = line_offset_to_width(&self.source, begin_line, begin);
-        let first_marker = if is_single_line {
-            line_offset_to_width(&self.source, begin_line, close) - first_spaces
-        } else {
-            begin_line.width_cjk() - first_spaces + '\n'.len_utf8()
-        };
 
-        let after_marker = line_offset_to_width(&self.source, close_line, close);
-        //println!("{:?} {} {}", before_spaces, before_marker, after_marker_width);
+    // @TODO: Display second row
+});
+
+/****************************************************************************
+ * For printing a single row
+ ****************************************************************************/
+struct PaintInput<'a> {
+    row_number_max_len: u8,
+    line: &'a str,
+    //word_wrap: usize,
+    message: &'a str,
+}
+
+struct ContextfulRow {
+    row_number: usize,
+    highlight_index: (usize, usize),
+    context_index: usize,
+}
+
+impl ContextfulRow {
+    sidebyside_len_and_push!(len, pipe<U>(self: &Self, extra: PaintInput, buffer: U) {
     } {
-        // Print the filename, row, and col span
-        //row_digit_len => pad(buffer, row_digit_len, "");
-        //4 => buffer.push_str("--> ");
-        //8 => buffer.push_str("<source>");
-        //1 => buffer.push(':');
-        //// Rows-col range
-        //r0 => push_num(buffer, count_digits(r0), r0);
-        //1 => buffer.push(':');
-        //c0_digit_len => push_num(buffer, c0_digit_len, c0);
-        //row_digit_len => push_num(buffer, row_digit_len, r0);
-        //1 => buffer.push(':');
-        //c1_digit_len => push_num(buffer, c1_digit_len, c1);
-        //1 => buffer.push('\n');
+        USIZE_BASE_10_MAX_DIGITS as usize => buffer.consume(&PADDING[0..extra.row_number_max_len as usize]);
+        " |\n";
 
-        // Beginning padding for source code
-        row_digit_len => pad(buffer, row_digit_len, "");
-        3 => buffer.push_str(" |\n");
-
-        // Error marker for begin line
-        if is_single_line { 0 } else {
-            row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
-        } => if !is_single_line {
-            pad(buffer, row_digit_len, "");
-            buffer.push_str(" | ");
-            debug_assert!(" ".width_cjk() == 1);
-            debug_assert!("v".width_cjk() == 1);
-            for _ in 0..first_spaces { buffer.push(' '); }
-            for _ in 0..first_marker { buffer.push('v'); }
-            buffer.push('\n');
-        };
-
-        // Print source with row numbers
-        {
-            self.source
-                .lines()
-                .skip(r0)
-                .take(row_count)
-                .map(|line| row_digit_len + 3 + line.len() + 1)
-                .sum::<usize>()
-        } => {
-            let mut row = r0 + 1;
-            for line in self.source.lines().skip(r0).take(row_count) {
-                push_num(buffer, row_digit_len, row);
-                buffer.push_str(" | ");
-                buffer.push_str(line);
-                buffer.push('\n');
-                row += 1;
-            }
-        };
-
-        // Error marker for close line
-        row_digit_len => pad(buffer, row_digit_len, "");
+        USIZE_BASE_10_MAX_DIGITS as usize => push_num(self.row_number, buffer);
         " | ";
-        if is_single_line {
-            first_spaces + first_marker
-        } else {
-            after_marker
-        } => if is_single_line {
-            debug_assert!(" ".width_cjk() == 1);
-            debug_assert!("^".width_cjk() == 1);
-            for _ in 0..first_spaces { buffer.push(' '); }
-            for _ in 0..first_marker { buffer.push('^'); }
-        } else {
-            for _ in 0..after_marker { buffer.push('^'); }
+        extra.line.len() => buffer.consume(extra.line);
+        "\n";
+
+        USIZE_BASE_10_MAX_DIGITS as usize => buffer.consume(&PADDING[0..extra.row_number_max_len as usize]);
+        " | ";
+        extra.line.width_cjk() => {
+            let offset = self.highlight_index.0.saturating_sub(self.context_index);
+            let offset_disp = extra.line[0..offset].width_cjk();
+            for _ in 0..offset_disp {
+                buffer.consume(" ");
+            }
+
+            let len = extra.line.width_cjk();
+            let arrow_close = (self.highlight_index.1 - self.context_index - offset).min(len);
+            let arrow_disp = extra.line[offset..arrow_close].width_cjk();
+            for _ in 0..arrow_disp {
+                buffer.consume("^");
+            }
         };
         "\n";
 
-        // Closing padding for source code
-        row_digit_len => pad(buffer, row_digit_len, "");
-        3 => buffer.push_str(" |\n");
+        USIZE_BASE_10_MAX_DIGITS as usize => buffer.consume(&PADDING[0..extra.row_number_max_len as usize]);
+        " = ";
+        extra.message.len() => buffer.consume(extra.message);
+        "\n";
 
-        // Print error message
-        row_digit_len => pad(buffer, row_digit_len, "");
-        3 => buffer.push_str(" = ");
-        self.message.len() => buffer.push_str(self.message.as_str());
     });
 }
 
 /****************************************************************************
  * For printing
  ****************************************************************************/
-// If I do include this, need to deal with error markers are trimmed substrings
-//fn trim_to_limit(line: &str, is_reverse: bool) -> (&str, &str) {
-//    let len = line.width_cjk();
-//    if len > DISPLAY_LIMIT {
-//        let mut width = len + ELLIPSIS.len();
-//        let mut close = 0;
-//        if is_reverse {
-//            for (index, grapheme) in line.grapheme_indices(true).rev() {
-//                width -= grapheme.width_cjk();
-//                if width <= DISPLAY_LIMIT {
-//                    close = index;
-//                    break
-//                }
-//            }
-//        } else {
-//            for (index, grapheme) in line.grapheme_indices(true) {
-//                width -= grapheme.width_cjk();
-//                if width <= DISPLAY_LIMIT {
-//                    close = index;
-//                    break
-//                }
-//            }
-//        }
-//        (&line[0..close], ELLIPSIS)
-//    } else {
-//        (line, "")
-//    }
-//}
+const USIZE_BASE_10_MAX_DIGITS: usize = count_digits(usize::MAX) as usize;
+const PADDING: &str = unsafe { std::str::from_utf8_unchecked(&[b' '; USIZE_BASE_10_MAX_DIGITS]) };
 
 // Although the standard library provides this function (`usize::to_string`)
 // I want no-allocations version (mostly as an intellectual exercise)
 // similar to https://github.com/rust-lang/rust/blob/1.26.0/src/libcore/fmt/num.rs#L50-L98
-fn push_num(buffer: &mut String, digit_len: usize, mut num: usize) {
-    let mut temp: [u8; USIZE_BASE_10_MAX_DIGITS] = [0; USIZE_BASE_10_MAX_DIGITS];
+fn push_num<U: Consumer>(mut num: usize, buffer: &mut U) {
+    let mut temp = [0u8; USIZE_BASE_10_MAX_DIGITS];
     let mut curr = temp.len();
     let base = 10;
     loop {
@@ -297,14 +224,12 @@ fn push_num(buffer: &mut String, digit_len: usize, mut num: usize) {
             break;
         }
     }
-    let numstr = unsafe { std::str::from_utf8_unchecked(&temp[curr..]) };
-    assert!(numstr.len() <= digit_len);
-    pad(buffer, digit_len, numstr);
+    buffer.consume(unsafe { std::str::from_utf8_unchecked(&temp[curr..]) });
 }
 
 // Count the number of digits in the base-10 representation without allocations
 // i.e. Naive alternative is `num.to_string().len()`
-fn count_digits(mut num: usize) -> usize {
+const fn count_digits(mut num: usize) -> u8 {
     let mut size = 0;
     let base = 10;
     loop {
@@ -315,12 +240,4 @@ fn count_digits(mut num: usize) -> usize {
         }
     }
     size
-}
-
-fn pad(buffer: &mut String, len: usize, to_pad: &str) {
-    assert!(to_pad.len() <= len);
-    buffer.push_str(to_pad);
-    for _ in 0..len - to_pad.len() {
-        buffer.push(' ');
-    }
 }
