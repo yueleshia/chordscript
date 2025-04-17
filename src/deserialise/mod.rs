@@ -20,7 +20,7 @@ macro_rules! reexport {
 }
 
 reexport!(keyspace_preview::KeyspacePreview); // Default printer
-reexport!(list_preview::{ListDebug, ListPreview, ListChord}); // Default printer
+reexport!(list_preview::{ListDebug, ListPreview, ListIter, ListChord}); // Default printer
 reexport!(shellscript::Shellscript); // For external file to be used by others
 
 reexport!(i3::I3); // No way to escape newlines, so should avoid this
@@ -32,8 +32,9 @@ reexport!(i3_shell::I3Shell);
 
 use std::cmp;
 
-use crate::precalculate_capacity_and_build;
 use crate::structs::{Chord, Cursor, WithSpan};
+
+//run: cargo run -- shortcuts -c $HOME/interim/hk/config.txt
 
 /****************************************************************************
  * Print trait

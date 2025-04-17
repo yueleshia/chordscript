@@ -1,13 +1,14 @@
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::deserialise::{TrimEscapeStrList, Print};
-use crate::parser::{ShortcutOwner, ShortcutIter};
+use crate::parser::ShortcutOwner;
 use crate::structs::{Chord, Shortcut, WithSpan};
 use crate::{array, precalculate_capacity_and_build};
 
 pub struct ListDebug<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
 pub struct ListPreview<'parsemes, 'filestr>(pub &'parsemes ShortcutOwner<'filestr>);
 pub struct ListChord<'parsemes, 'filestr>(pub &'parsemes WithSpan<'filestr, Chord>);
-struct ListIter<'parsemes, 'filestr>(ShortcutIter<'parsemes, 'filestr>);
+pub struct ListIter<'parsemes, 'filestr: 'parsemes, T>(pub T)
+    where T:  Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone;
 
 const QUOTE: char = '\'';
 const CANDIDATES: [char; 1] = ['\''];
@@ -36,16 +37,17 @@ impl<'parsemes, 'filestr> Print for ListPreview<'parsemes, 'filestr> {
     });
 }
 
-
-impl<'parsemes, 'filestr> Print for ListIter<'parsemes, 'filestr> {
+impl<'parsemes, 'filestr, T> Print for ListIter<'parsemes, 'filestr, T>
+    where T: Iterator<Item = Shortcut<'parsemes, 'filestr>> + Clone
+{
     precalculate_capacity_and_build!(self, buffer {} {
-        self.0.clone().map(|Shortcut { hotkey, command }|
+        self.0.clone().map(|Shortcut { hotkey, command }| {
             1
             + array!(@len_join { hotkey } |> ListChord, " ; ")
             + 1
             + TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).string_len()
             + 1
-        ).sum::<usize>() => self.0.clone().for_each(|Shortcut { hotkey, command }| {
+        }).sum::<usize>() => self.0.clone().for_each(|Shortcut { hotkey, command }| {
             buffer.push('|');
             array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
             buffer.push('|');
