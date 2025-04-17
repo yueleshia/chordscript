@@ -1,8 +1,6 @@
-use crate::parser::shortcuts::ShortcutOwner;
-//use crate::structs::{Chord, ChordModifiers};
 use crate::constants::{KEYCODES, MODIFIERS};
+use crate::parser::{shortcuts::ShortcutOwner, Shortcut};
 use crate::sidebyside_len_and_push;
-use crate::structs::Shortcut;
 
 use super::{DeserialiseChord, DeserialiseHotkey, PreallocPush};
 

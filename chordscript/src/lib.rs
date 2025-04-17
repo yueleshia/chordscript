@@ -12,7 +12,6 @@ mod errors;
 mod macros;
 pub mod parser;
 mod reporter;
-mod structs;
 pub mod templates;
 
 pub use crate::parser::{lexemes, shortcuts, keyspaces};

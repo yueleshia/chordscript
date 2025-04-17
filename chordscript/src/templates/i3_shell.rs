@@ -1,5 +1,4 @@
 use crate::parser::shortcuts::ShortcutOwner;
-//use crate::structs::{Shortcut, Chord};
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::parser::keyspaces::{process, Action, Keyspace};
 use crate::sidebyside_len_and_push;

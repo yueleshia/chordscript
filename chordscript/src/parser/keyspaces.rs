@@ -5,8 +5,7 @@ use std::cmp;
 use std::mem;
 use std::ops::Range;
 
-use super::shortcuts::ShortcutOwner;
-use crate::structs::{Chord, Cursor, Hotkey, Shortcut};
+use super::{Chord, Cursor, Hotkey, Shortcut, shortcuts::ShortcutOwner};
 
 /****************************************************************************
  * Token definitions

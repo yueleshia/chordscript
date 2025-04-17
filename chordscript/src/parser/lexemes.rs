@@ -1,11 +1,12 @@
 //run: cargo test -- --nocapture
 
+use std::mem::swap;
+
 use crate::constants::SEPARATOR;
 use crate::errors::lexer as errors;
 use crate::reporter::MarkupError;
-use crate::structs::Cursor;
 
-use std::mem::swap;
+use super::Cursor;
 
 // For escaping during the lexer phase, State::BEscape
 // We introduce a new value with "\n" not in the original text.

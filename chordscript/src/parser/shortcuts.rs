@@ -4,9 +4,10 @@
 use crate::constants::KEYCODES;
 use crate::constants::MODIFIERS;
 use crate::errors::parser as errors;
-use super::lexemes::{LexOutput, Lexeme, PostLexEntry};
 use crate::reporter::MarkupError;
-use crate::structs::{Chord, Shortcut, WithSpan};
+
+use super::{Chord, Shortcut, WithSpan};
+use super::lexemes::{LexOutput, Lexeme, PostLexEntry};
 
 use std::ops::Range;
 type Output<T> = Result<T, MarkupError>;

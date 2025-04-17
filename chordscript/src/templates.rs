@@ -2,7 +2,7 @@
 
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::parser::shortcuts::ShortcutOwner;
-use crate::structs::{Chord, InnerChord};
+use crate::parser::{Chord, InnerChord};
 use std::io::{Result as IoResult, Write};
 
 use crate::{sidebyside_len_and_push, array_index_by_enum};
