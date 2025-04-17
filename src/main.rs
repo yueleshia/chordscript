@@ -1,7 +1,9 @@
-// run: cargo test -- --nocapture
+//run: cargo test -- --nocapture
+// run: cargo run -- --help
 // run: cargo run --release
+// run: cargo run -- keyspaces --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
 
-#![allow(dead_code)]
+//#![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
 #![allow(clippy::mem_discriminant_non_enum)]
 #![feature(or_patterns)]
@@ -21,17 +23,17 @@ use std::fs;
 //use std::io::{self, Write};
 use std::io;
 
-const DESCRIPTION: &str = "\
-Hello
+const LONG_HELP: &str = "\
+THIS IS WIP
 ";
 
-//run: cargo run -- keyspaces --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
+
 fn main() {
     let raw_args = std::env::args().collect::<Vec<_>>();
 
     let mut options = getopts::Options::new();
     // Yes, we check for '-h' or '--help' twice
-    options.optflag("h", "help", "print this help menu");
+    options.optflag("h", "help", "Display a more detailed help menu");
     options.reqopt(
         "c",
         "config",
@@ -45,11 +47,16 @@ fn main() {
         .and_then(subcommands)
     {
         Ok(()) => std::process::exit(0),
-        Err(Errors::Help) => eprintln!("{}", "Help!"),
+        Err(Errors::ShortHelp) => {
+            println!("{}", options.short_usage(&raw_args[0]))
+        }
+        Err(Errors::Help) => {
+            println!("{}\n{}", LONG_HELP, options.usage(&raw_args[0]))
+        }
         Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
         Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
-        Err(Errors::Debug(err)) => eprintln!("{}", err),
         Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
+        //Err(Errors::Debug(err)) => eprintln!("{}", err),
     }
     std::process::exit(1);
 }
@@ -60,10 +67,11 @@ fn main() {
 
 enum Errors {
     Help,
+    ShortHelp,
     Cli(getopts::Fail),
     Io(io::Error),
-    Debug(String),
     Parse(reporter::MarkupError),
+    //Debug(String),
 }
 
 fn handle_help_flag(input: &[String]) -> Result<(), Errors> {
@@ -133,7 +141,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
             println!("{}", deserialise::ListAll(&shortcuts).to_string_custom());
         }
 
-        Some(_) => return Err(Errors::Help),
+        Some(_) => return Err(Errors::ShortHelp),
 
     }
     Ok(())
@@ -143,9 +151,18 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
  * Integration Tests
  ****************************************************************************/
 #[test]
+fn on_file() {
+    let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
+    let file = fs::read_to_string(path).unwrap();
+    let lexemes = lexer::lex(&file).unwrap();
+    lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
+    let parsemes = parser::parse(lexemes).unwrap();
+    println!("{}", deserialise::ListAll(&parsemes).to_string_custom());
+}
+#[test]
 fn interpret() {
     let _file = r#"
-    #
+#
 #hello
 |super {{, alt, ctrl, ctrl alt}} Return|
   {{$TERMINAL, alacritty, \
@@ -160,7 +177,7 @@ fn interpret() {
 |super shift q|"#;
 
     let _file = r#"
-    #
+#
 #hello
 |super {{, alt, ctrl, ctrl alt}} Return|
   {{$TERMINAL, alacritty, \
@@ -172,13 +189,13 @@ fn interpret() {
     //println!("{}", _file);
 
     if let Err(err) = (|| -> Result<(), reporter::MarkupError> {
-        let _lexemes = lexer::process(_file)?;
+        let _lexemes = lexer::lex(_file)?;
         //_lexemes.to_iter().for_each(print_lexeme);
         //_lexemes.to_iter().for_each(debug_print_lexeme);
 
-        let parsemes = parser::process(&_lexemes)?;
-        println!("{}", deserialise::ListPreview(&parsemes).to_string_custom());
-        let keyspaces = keyspace::process(&parsemes);
+        let _parsemes = parser::parse(_lexemes)?;
+        //println!("{}", deserialise::ListAll(&_parsemes).to_string_custom());
+        let _keyspaces = keyspace::process(&_parsemes);
         //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
         //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
         Ok(())

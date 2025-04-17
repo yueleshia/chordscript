@@ -1,3 +1,5 @@
+//run: cargo test
+
 use crate::constants::SEPARATOR;
 use crate::reporter::MarkupError;
 use crate::structs::Cursor;
@@ -9,13 +11,8 @@ use std::mem::{replace, swap};
 // An alternative is changing Lexeme::Choice to accept an 'char' or '&str'
 const NEWLINE: &str = "\n";
 
-type Range = std::ops::Range<usize>;
 type Output<T> = Result<T, MarkupError>;
 type StepOutput<'filestr> = Output<Option<Lexeme<'filestr>>>;
-
-
-//run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list ./keyspace-list.sh api
-// run: cargo test
 
 #[derive(Debug)]
 pub enum Lexeme<'filestr> {
@@ -734,8 +731,8 @@ impl<'a> Iterator for CharsWithIndex<'a> {
 fn chars_with_index() {
     macro_rules! assert_peek_next {
         ($iter:ident, $ev:expr) => {
-            assert_eq!($iter.peek, $ev);
-            assert_eq!($iter.peek, $ev);
+            assert_eq!($iter.peek(), $ev);
+            assert_eq!($iter.peek(), $ev);
             assert_eq!($iter.next(), $ev);
         };
     }
