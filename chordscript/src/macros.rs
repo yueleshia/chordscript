@@ -61,22 +61,27 @@ macro_rules! precalculate_capacity_and_build {
 #[macro_export]
 macro_rules! sidebyside_len_and_push {
     (
-        $(! $( $prefix:ident )+ !)? $len:ident $(<$( $len_lt:lifetime ),*>)?,
-        $push_into:ident $(<$($push_lt:lifetime),*>)?
-            ($self:ident : $ty1:ty, $extra:ident : $ty2:ty, $buffer:ident: $filestr:lifetime)
+        $(! $( $prefix:ident )+ !)? $len:ident, $push_into:ident $(<$U2:ident>)?
+            ($self:ident : $ty1:ty, $extra:ident : $ty2:ty, $buffer:ident: $U:ident)
         {
             $( $init:stmt; )*
         } {
             $( $stmts:tt )*
         }
     ) => {
-        $( $( $prefix )* )? fn $len $(<$($len_lt),*>)? ($self: $ty1, $extra: $ty2) -> usize {
+        $( $( $prefix )* )? fn $len($self: $ty1, $extra: $ty2) -> usize {
             $( $init )*
             sidebyside_len_and_push!(@size $($stmts)*)
         }
-        fn $push_into $(<$($push_lt),*>)? ($self: $ty1, $extra: $ty2, $buffer: &mut Vec<&$filestr str>) {
+        fn $push_into $(<$U2: $crate::templates::Consumer>)? ($self: $ty1, $extra: $ty2, $buffer: &mut $U) {
             //#[cfg(debug_assertions)]
-            //debug_assert!({ $this.to_string_custom(); true });
+            //{
+            //    $( $init )*
+            //    let size = sidebyside_len_and_push!(@size $($stmts)*);
+            //    let mut temp = String::with_capacity(size);
+            //    let ptr = &mut temp;
+            //    sidebyside_len_and_push!(ptr @push $($stmts)*);
+            //}
             $( $init )*
             sidebyside_len_and_push!($buffer @push $($stmts)*);
         }
@@ -93,7 +98,7 @@ macro_rules! sidebyside_len_and_push {
     };
     // Additionally we support
     (@size $str:expr; $($rest:tt)*) => {
-        1 + sidebyside_len_and_push!(@size $($rest)*)
+        $str.len() + sidebyside_len_and_push!(@size $($rest)*)
     };
     (@size) => { 0 };
 
@@ -102,7 +107,7 @@ macro_rules! sidebyside_len_and_push {
         sidebyside_len_and_push!($buffer @push $($rest)*);
     };
     ($buffer:ident @push $str:literal; $($rest:tt)*) => {
-        $buffer.push($str);
+        $buffer.consume($str);
         sidebyside_len_and_push!($buffer @push $($rest)*);
     };
     ($buffer:ident @push) => { 0 };
@@ -111,9 +116,10 @@ macro_rules! sidebyside_len_and_push {
 // @TODO: Constants can probably use this
 #[macro_export]
 macro_rules! pick {
-    (1 => $me:expr $(=> $_:expr)*          ) => { $me };
-    (2 => $_1:expr => $me:expr => $_:expr  ) => { $me };
-    (3 => $_1:expr => $_2:expr => $me:expr ) => { $me };
+    (1 => $me:expr $(=> $__:expr)*                          ) => { $me };
+    (2 => $_1:expr => $me:expr $( => $__:expr)*             ) => { $me };
+    (3 => $_1:expr => $_2:expr => $me:expr $( => $__:expr )*) => { $me };
+    (4 => $_1:expr => $_2:expr => $_3:expr => $me:expr      ) => { $me };
 }
 
 #[macro_export]

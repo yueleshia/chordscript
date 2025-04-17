@@ -1,10 +1,12 @@
-use crate::parser::shortcuts::ShortcutOwner;
 use crate::constants::{KEYCODES, MODIFIERS};
 use crate::parser::keyspaces::{process, Action, Keyspace};
+use crate::parser::shortcuts::ShortcutOwner;
 use crate::sidebyside_len_and_push;
 
 use super::shellscript::{SHELL_CHORD_DELIM, SHELL_CONSTANTS};
-use super::{DeserialiseChord, DeserialiseHotkey, PreallocPush, CHORD_MAX_PUSH_LEN};
+use super::{
+    Consumer, DeserialiseChord, DeserialiseHotkey, PreallocLen, PreallocPush, CHORD_MAX_PUSH_LEN,
+};
 
 //run: cargo test -- --nocapture
 
@@ -44,90 +46,91 @@ const UNUSED: DeserialiseChord = DeserialiseChord {
     key_to_str: &KEYCODES,
 };
 
-impl<'filestr, 'b> PreallocPush<'filestr, DeserialiseChord> for Action<'b, 'filestr> {
-    sidebyside_len_and_push!(len, push_into (self: &Self, _a: DeserialiseChord, buffer: 'filestr) {} {
-        "bindsym ";
-        CHORD_MAX_PUSH_LEN => self.key_trigger().chord.push_into(KEYBIND_CONSTANTS, buffer);
-        1 => match self {
-            Action::SetState(_) => buffer.push(" mode \""),
-            Action::Command(_, _) => buffer.push(" bindsym exec --no-startup-id \""),
-        };
-
-        match self {
-            Action::SetState(title) => DeserialiseHotkey(TITLE_DELIM, title).len(TITLE_CONSTANTS) + 1,
-            Action::Command(_, shortcut) => {
-                1
-                + 1
-                + DeserialiseHotkey(SHELL_CHORD_DELIM, shortcut.hotkey).len(SHELL_CONSTANTS)
-                + 1
-            }
-        } => match self {
-            Action::SetState(title) => {
-                //debug_assert!()
-                DeserialiseHotkey(TITLE_DELIM, title).push_into(TITLE_CONSTANTS, buffer);
-                buffer.push("\";\n");
-            }
-            Action::Command(_trigger, shortcut) => {
-                buffer.push("shortcuts.sh");
-                buffer.push(" '");
-                DeserialiseHotkey(SHELL_CHORD_DELIM, shortcut.hotkey).push_into(SHELL_CONSTANTS, buffer);
-                buffer.push("'\"; mode \"default\";\n");
-            }
-        };
-    });
+//struct WrapAction<'a, 'b>(Action<'a, 'b>);
+impl<'a, 'b> PreallocLen<DeserialiseChord> for Action<'a, 'b> {
+    fn len(&self, extra: DeserialiseChord) -> usize {
+        action_len(self, extra)
+    }
+}
+impl<'a, 'b, U: Consumer> PreallocPush<DeserialiseChord, U> for Action<'a, 'b> {
+    fn pipe(&self, extra: DeserialiseChord, buffer: &mut U) {
+        action_pipe(self, extra, buffer)
+    }
 }
 
-impl<'filestr, 'b, 'owner> PreallocPush<'filestr, DeserialiseChord>
-    for Keyspace<'owner, 'b, 'filestr>
-{
-    sidebyside_len_and_push!(len, push_into (self: &Self, _a: DeserialiseChord, buffer: 'filestr) {} {
-        "\nmode \"";
-            DeserialiseHotkey(TITLE_DELIM, self.title).len(TITLE_CONSTANTS) =>
-                DeserialiseHotkey(TITLE_DELIM, self.title).push_into(TITLE_CONSTANTS, buffer);
-            "\" {\n";
-            self.actions.iter().map(|a| a.len(UNUSED) + 1).sum::<usize>() => for action in self.actions {
-                buffer.push("  ");
-                action.push_into(UNUSED, buffer);
-            };
-            "  bindsym Escape mode \"default\";\n";
-        "}\n";
-    });
+sidebyside_len_and_push!(action_len, action_pipe<U>(me: &Action, _a: DeserialiseChord, buffer: U) {} {
+    "bindsym ";
+    CHORD_MAX_PUSH_LEN => me.key_trigger().chord.pipe(KEYBIND_CONSTANTS, buffer);
+    1 => match me {
+        Action::SetState(_) => buffer.consume(" mode \""),
+        Action::Command(_, _) => buffer.consume(" bindsym exec --no-startup-id \""),
+    };
+
+    match me {
+        Action::SetState(title) => DeserialiseHotkey(TITLE_DELIM, title).len(TITLE_CONSTANTS) + "\";\n".len(),
+        Action::Command(_, shortcut) => {
+            "shortcuts.sh".len()
+            + 1
+            + DeserialiseHotkey(SHELL_CHORD_DELIM, shortcut.hotkey).len(SHELL_CONSTANTS)
+            + 1
+        }
+    } => match me {
+        Action::SetState(title) => {
+            //debug_assert!()
+            DeserialiseHotkey(TITLE_DELIM, title).pipe(TITLE_CONSTANTS, buffer);
+            buffer.consume("\";\n");
+        }
+        Action::Command(_trigger, shortcut) => {
+            buffer.consume("shortcuts.sh");
+            buffer.consume(" '");
+            DeserialiseHotkey(SHELL_CHORD_DELIM, shortcut.hotkey).pipe(SHELL_CONSTANTS, buffer);
+            buffer.consume("'\"; mode \"default\";\n");
+        }
+    };
+});
+
+impl<'a, 'b, 'c> PreallocLen<DeserialiseChord> for Keyspace<'a, 'b, 'c> {
+    fn len(&self, extra: DeserialiseChord) -> usize {
+        keyspace_len(self, extra)
+    }
 }
+impl<'a, 'b, 'c, U: Consumer> PreallocPush<DeserialiseChord, U> for Keyspace<'a, 'b, 'c> {
+    fn pipe(&self, extra: DeserialiseChord, buffer: &mut U) {
+        keyspace_pipe(self, extra, buffer)
+    }
+}
+sidebyside_len_and_push!(keyspace_len, keyspace_pipe<U>(me: &Keyspace, _a: DeserialiseChord, buffer: U) {} {
+    "\nmode \"";
+        DeserialiseHotkey(TITLE_DELIM, me.title).len(TITLE_CONSTANTS) =>
+            DeserialiseHotkey(TITLE_DELIM, me.title).pipe(TITLE_CONSTANTS, buffer);
+        "\" {\n";
+        me.actions.iter().map(|a| a.len(UNUSED) + 1).sum::<usize>() => for action in me.actions {
+            buffer.consume("  ");
+            action.pipe(UNUSED, buffer);
+        };
+        "  bindsym Escape mode \"default\";\n";
+    "}\n";
+});
 
 pub struct Wrapper();
-impl<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>> for Wrapper {
-    sidebyside_len_and_push!(len, push_into (self: &Self, shortcut_owner: &ShortcutOwner<'a>, buffer: 'a) {
-        let owner = process(shortcut_owner);
-        let mut iter = owner.to_iter();
-        let modeless = iter.next().expect("DEV: We always expect `title: []` to exist");
-    } {
-        modeless.actions.iter().map(|action| action.len(UNUSED)).sum::<usize>() =>
-            modeless.actions.iter().for_each(|action| action.push_into(UNUSED, buffer));
-        "\n";
-        iter.map(|keyspace| keyspace.len(UNUSED)).sum::<usize>() =>
-            iter.for_each(|keyspace| keyspace.push_into(UNUSED, buffer));
-    });
+impl PreallocLen<&ShortcutOwner<'_>> for Wrapper {
+    fn len(&self, owner: &ShortcutOwner<'_>) -> usize {
+        len((), owner)
+    }
 }
-
-//sidebyside_len_and_push!(len, push_into, self: &Self, owner: &ShortcutOwner<'a>, buffer: 'a {} {
-//    "#!/bin/sh\n";
-//    "case \"${1}\"\n";
-//    owner.shortcuts.len() + owner.to_iter().map(|s| s.len(DEFAULT_DESERIALISE)).sum::<usize>() => {
-//        let mut prefix = "in";
-//        owner.to_iter().filter(|s| !s.is_placeholder).for_each(|s| {
-//            buffer.push(prefix);
-//            prefix = ";;";
-//            s.push_into(DEFAULT_DESERIALISE, buffer);
-//        });
-//    };
-//    "*)  notify.sh \"invalid key combination ${1}\"; exit 1\n";
-//    "esac\n";
-//});
-//}
-//
-
-//pub fn format<'a>(shortcut_owner: &ShortcutOwner<'a>) -> Vec<&'a str> {
-//    let mut buffer = Vec::with_capacity(len(shortcut_owner, ()));
-//    push_into(shortcut_owner, (), &mut buffer);
-//    buffer
-//}
+impl<U: Consumer> PreallocPush<&ShortcutOwner<'_>, U> for Wrapper {
+    fn pipe(&self, owner: &ShortcutOwner<'_>, buffer: &mut U) {
+        pipe((), owner, buffer)
+    }
+}
+sidebyside_len_and_push!(len, pipe<U>(_me: (), shortcut_owner: &ShortcutOwner, buffer: U) {
+    let owner = process(shortcut_owner);
+    let mut iter = owner.to_iter();
+    let modeless = iter.next().expect("DEV: We always expect `title: []` to exist");
+} {
+    modeless.actions.iter().map(|action| action.len(UNUSED)).sum::<usize>() =>
+        modeless.actions.iter().for_each(|action| action.pipe(UNUSED, buffer));
+    "\n";
+    iter.map(|keyspace| keyspace.len(UNUSED)).sum::<usize>() =>
+        iter.for_each(|keyspace| keyspace.pipe(UNUSED, buffer));
+});

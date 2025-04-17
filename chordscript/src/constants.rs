@@ -86,6 +86,8 @@ array_index_by_enum! { MODIFIER_COUNT: usize
         Alt => "alt", Ctrl => "ctrl", Shift => "shift", Super => "super",
     } => 1 pub const MODIFIERS: [&str]
 }
+pub const MOD_UTF8_MAX_LEN: usize = fold_max_len(&MODIFIERS);
+
 array_index_by_enum! { KEYCODE_COUNT: usize
     pub enum Keycodes {
         Comma => ",",
@@ -108,6 +110,8 @@ array_index_by_enum! { KEYCODE_COUNT: usize
         XF86MonBrightnessDown => "XF86MonBrightnessDown",
     } => 1 pub const KEYCODES: [&str]
 }
+pub const KEY_UTF8_MAX_LEN: usize = fold_max_len(&KEYCODES);
+
 const ALL_KEYS: [&str; MODIFIERS.len() + KEYCODES.len()] = {
     let mut base = [""; MODIFIERS.len() + KEYCODES.len()];
     copy_from_slice!(base[{ 0 }..] = MODIFIERS);
@@ -117,27 +121,27 @@ const ALL_KEYS: [&str; MODIFIERS.len() + KEYCODES.len()] = {
 // Join ALL_KEYS for printing an error message
 const_join_str!(pub const AVAILABLE_KEYS: &str = ALL_KEYS | join(JOIN_RAW JOIN_LEN));
 
-#[cfg(test)]
-pub const KEYSTR_UTF8_MAX_LEN: usize = {
+const fn fold_max_len(list: &[&str]) -> usize {
     let mut max_len = 0;
     let mut i = 0;
     loop {
-        if max_len < ALL_KEYS[i].len() {
-            max_len = ALL_KEYS[i].len();
+        if max_len < list[i].len() {
+            max_len = list[i].len();
         }
         i += 1;
-        if i >= ALL_KEYS.len() {
+        if i >= list.len() {
             break;
         }
     }
     max_len
-};
+}
 
 // Many tests to check for human input error
 #[cfg(test)]
 mod test {
     use super::*;
     const BLACKLIST: [char; 6] = ['|', '!', '"', ';', '{', '}'];
+    const KEYSTR_UTF8_MAX_LEN: usize = fold_max_len(&ALL_KEYS);
 
     fn assert_is_unique<T: Ord>(mut input: Vec<T>, msg: &str) {
         let before_sort_len = input.len();

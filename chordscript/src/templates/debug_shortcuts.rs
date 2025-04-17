@@ -2,7 +2,7 @@ use crate::constants::{KEYCODES, MODIFIERS};
 use crate::parser::{shortcuts::ShortcutOwner, Shortcut};
 use crate::sidebyside_len_and_push;
 
-use super::{DeserialiseChord, DeserialiseHotkey, PreallocPush};
+use super::{Consumer, DeserialiseChord, DeserialiseHotkey, PreallocLen, PreallocPush};
 
 //run: cargo test -- --nocapture
 
@@ -11,22 +11,30 @@ const DEBUG_CONSTANTS: DeserialiseChord = DeserialiseChord {
     mod_to_str: &MODIFIERS,
     key_to_str: &KEYCODES,
 };
-sidebyside_len_and_push!(len<'o, 's>, push_into<'o, 's>(shortcut: &Shortcut<'o, 's>, extra: DeserialiseChord, buffer: 's) {} {
-    1 => if shortcut.is_placeholder { buffer.push("!") } else { buffer.push("|") };
-    DeserialiseHotkey(" ; ", shortcut.hotkey).len(extra) => DeserialiseHotkey(" ; ", shortcut.hotkey).push_into(extra, buffer);
-    1 => if shortcut.is_placeholder { buffer.push("!") } else { buffer.push("|") };
+sidebyside_len_and_push!(shortcut_len, shortcut_pipe<U>(shortcut: &Shortcut, extra: DeserialiseChord, buffer: U) {} {
+    1 => if shortcut.is_placeholder { buffer.consume("!") } else { buffer.consume("|") };
+    DeserialiseHotkey(" ; ", shortcut.hotkey).len(extra) => DeserialiseHotkey(" ; ", shortcut.hotkey).pipe(extra, buffer);
+    1 => if shortcut.is_placeholder { buffer.consume("!") } else { buffer.consume("|") };
     " ";
-    shortcut.command.len() => shortcut.command.iter().for_each(|with_span| buffer.push(with_span.source));
+    shortcut.command.len() => shortcut.command.iter().for_each(|with_span| buffer.consume(with_span.source));
     "\n";
 });
 
 pub struct Wrapper();
-impl<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>> for Wrapper {
-    sidebyside_len_and_push!(len, push_into(self: &Self, owner: &ShortcutOwner<'a>, buffer: 'a) {} {
-        owner.to_iter().map(|s| len(&s, DEBUG_CONSTANTS)).sum::<usize>() => {};
-        "==== Placeholders ====\n";
-        0 => owner.to_iter().filter(|s| s.is_placeholder).for_each(|s| push_into(&s, DEBUG_CONSTANTS, buffer));
-        "==== Shortcuts ====\n";
-        0 => owner.to_iter().filter(|s| !s.is_placeholder).for_each(|s| push_into(&s, DEBUG_CONSTANTS, buffer));
-    });
+impl PreallocLen<&ShortcutOwner<'_>> for Wrapper {
+    fn len(&self, owner: &ShortcutOwner<'_>) -> usize {
+        len((), owner)
+    }
 }
+impl<U: Consumer> PreallocPush<&ShortcutOwner<'_>, U> for Wrapper {
+    fn pipe(&self, owner: &ShortcutOwner<'_>, buffer: &mut U) {
+        pipe((), owner, buffer)
+    }
+}
+sidebyside_len_and_push!(len, pipe<U>(_me: (), owner: &ShortcutOwner, buffer: U) {} {
+    owner.to_iter().map(|s| shortcut_len(&s, DEBUG_CONSTANTS)).sum::<usize>() => {};
+    "==== Placeholders ====\n";
+    0 => owner.to_iter().filter(|s| s.is_placeholder).for_each(|s| shortcut_pipe(&s, DEBUG_CONSTANTS, buffer));
+    "==== Shortcuts ====\n";
+    0 => owner.to_iter().filter(|s| !s.is_placeholder).for_each(|s| shortcut_pipe(&s, DEBUG_CONSTANTS, buffer));
+});

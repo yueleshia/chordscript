@@ -1,8 +1,8 @@
 //run: cargo test -- --nocapture
 
-use std::io::{Result as IoResult, Write};
+use std::io;
 
-use crate::constants::{KEYCODES, MODIFIERS};
+use crate::constants::{KEY_UTF8_MAX_LEN, MOD_UTF8_MAX_LEN, KEYCODES, MODIFIERS};
 use crate::parser::{shortcuts::ShortcutOwner, Chord, InnerChord};
 use crate::{array_index_by_enum, sidebyside_len_and_push};
 
@@ -10,37 +10,69 @@ mod debug_shortcuts;
 mod i3_shell;
 mod shellscript;
 
-array_index_by_enum! { TEMPLATE_COUNT: usize
+array_index_by_enum!( TEMPLATE_COUNT: usize
     pub enum Templates {
-        ShellScript    => Templates::ShellScript    => "shell"           => &shellscript::Wrapper(),
-        I3Shell        => Templates::I3Shell        => "i3"              => &i3_shell::Wrapper(),
-        DebugShortcuts => Templates::DebugShortcuts => "debug-shortcuts" => &debug_shortcuts::Wrapper(),
+        ShellScript    => Templates::ShellScript    => "shell"           => &shellscript::Wrapper()     => &shellscript::Wrapper(),
+        I3Shell        => Templates::I3Shell        => "i3"              => &i3_shell::Wrapper()        => &i3_shell::Wrapper(),
+        DebugShortcuts => Templates::DebugShortcuts => "debug-shortcuts" => &debug_shortcuts::Wrapper() => &debug_shortcuts::Wrapper(),
     }
     => 1 pub const ID_TO_TEMPLATE: [Templates]
     => 2 pub const ID_TO_STR: [&str]
-    => 3 pub const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
+    => 3 pub const VTABLE_STRING: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, String>]
+    => 4 pub const VTABLE_STDOUT: [&dyn for<'a, 'b> PreallocPush<&'b ShortcutOwner<'a>, io::Stdout>]
+);
+
+pub trait Consumer {
+    fn consume(&mut self, part: &str);
+}
+impl Consumer for String {
+    fn consume(&mut self, part: &str) {
+        // Assume strings were allocated with `with_capacity(PreallocLen)`
+        #[cfg(debug_assertions)]
+        let before = self.capacity();
+
+        self.push_str(part);
+
+        #[cfg(debug_assertions)]
+        assert_eq!(before, self.capacity());
+    }
+}
+impl Consumer for io::Stdout {
+    fn consume(&mut self, part: &str) {
+        use io::Write;
+        match self.write_all(part.as_bytes()) {
+            Ok(()) => {}
+            Err(_) => unreachable!(),
+        }
+    }
+}
+impl Consumer for io::Stderr {
+    fn consume(&mut self, part: &str) {
+        use io::Write;
+        match self.write_all(part.as_bytes()) {
+            Ok(()) => {}
+            Err(_) => unreachable!(),
+        }
+    }
 }
 
-impl<'filestr, 'b> PreallocPush<'filestr, &'b ShortcutOwner<'filestr>> for Templates {
-    fn len(&self, owner: &'b ShortcutOwner<'filestr>) -> usize {
-        VTABLE[self.id()].len(owner)
-    }
-    fn push_into(&self, owner: &'b ShortcutOwner<'filestr>, buffer: &mut Vec<&'filestr str>) {
-        VTABLE[self.id()].push_into(owner, buffer);
-    }
+pub trait PreallocLen<T> {
+    fn len(&self, extra: T) -> usize;
+}
+// Split this because `.len()` might be the same for various Consumers
+pub trait PreallocPush<T, U: Consumer>: PreallocLen<T> {
+    fn pipe(&self, extra: T, pipe: &mut U);
 }
 
 impl Templates {
-    #[allow(dead_code)]
-    pub fn pipe<T: Write>(&self, shortcuts: &ShortcutOwner, stream: &mut T) -> IoResult<()> {
-        let wrapper = VTABLE[self.id()];
-        let mut buffer = Vec::with_capacity(wrapper.len(shortcuts));
-        wrapper.push_into(shortcuts, &mut buffer);
-
-        for x in buffer {
-            stream.write_fmt(format_args!("{}", x))?
-        }
-        Ok(())
+    pub fn len(&self, owner: &ShortcutOwner<'_>) -> usize {
+        VTABLE_STDOUT[self.id()].len(owner)
+    }
+    pub fn pipe_stdout(&self, owner: &ShortcutOwner<'_>, buffer: &mut io::Stdout) {
+        VTABLE_STDOUT[self.id()].pipe(owner, buffer);
+    }
+    pub fn pipe_string(&self, owner: &ShortcutOwner<'_>, buffer: &mut String) {
+        VTABLE_STRING[self.id()].pipe(owner, buffer);
     }
 }
 
@@ -51,11 +83,6 @@ const DEBUG_CHORD_CONSTANTS: DeserialiseChord = DeserialiseChord {
 };
 const CHORD_MAX_PUSH_LEN: usize = InnerChord::new().len(DEBUG_CHORD_CONSTANTS);
 
-pub trait PreallocPush<'a, T> {
-    fn len(&self, extra: T) -> usize;
-    fn push_into(&self, extra: T, buffer: &mut Vec<&'a str>);
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct DeserialiseChord {
     delim: &'static str,
@@ -64,23 +91,24 @@ pub(crate) struct DeserialiseChord {
 }
 
 impl InnerChord {
-    sidebyside_len_and_push!(! const ! len, push_into<'a> (self: &Self, extra: DeserialiseChord, buffer: 'a) {} {
+    sidebyside_len_and_push!(! const ! len, pipe<F> (self: &Self, extra: DeserialiseChord, buffer: F) {} {
         // At most `mod_to_str.len()` modifiers will be added
-        extra.mod_to_str.len() * 2 => {
+        extra.mod_to_str.len() * (extra.delim.len() + MOD_UTF8_MAX_LEN)
+        => {
             let mut delim = "";
             for (i, mod_str) in extra.mod_to_str.iter().enumerate() {
                 if self.modifiers & (1 << i) != 0 {
-                    buffer.push(delim);
-                    buffer.push(mod_str);
+                    buffer.consume(delim);
+                    buffer.consume(mod_str);
                     delim = extra.delim;
                 }
             }
         };
 
         // Zero or two &str added
-        2 => if self.key < extra.key_to_str.len() {
-            buffer.push(extra.delim);
-            buffer.push(extra.key_to_str[self.key]);
+        extra.delim.len() + KEY_UTF8_MAX_LEN => if self.key < extra.key_to_str.len() {
+            buffer.consume(extra.delim);
+            buffer.consume(extra.key_to_str[self.key]);
         };
     });
 }
@@ -91,30 +119,19 @@ impl InnerChord {
 //}
 
 struct DeserialiseHotkey<'a, 'b>(&'static str, &'b [Chord<'a>]);
-impl<'a, 'b> PreallocPush<'a, DeserialiseChord> for DeserialiseHotkey<'a, 'b> {
-    fn len(&self, _: DeserialiseChord) -> usize {
-        self.1.len() * (1 + CHORD_MAX_PUSH_LEN)
+impl PreallocLen<DeserialiseChord> for DeserialiseHotkey<'_, '_> {
+    fn len(&self, extra: DeserialiseChord) -> usize {
+        self.1.len() * (extra.delim.len() + CHORD_MAX_PUSH_LEN)
     }
-    fn push_into(&self, extra: DeserialiseChord, buffer: &mut Vec<&'a str>) {
+}
+impl<U: Consumer> PreallocPush<DeserialiseChord, U> for DeserialiseHotkey<'_, '_> {
+    fn pipe(&self, extra: DeserialiseChord, buffer: &mut U) {
         let mut delim = "";
         for sourced_chord in self.1 {
-            buffer.push(delim);
+            buffer.consume(delim);
+            buffer.consume(delim);
             delim = self.0;
-            sourced_chord.chord.push_into(extra, buffer);
+            sourced_chord.chord.pipe(extra, buffer);
         }
     }
 }
-
-//impl<'a, 'b, T: PreallocPush<'a, U>, U: Copy> PreallocPush<'a, U> for List<'b, T, U> {
-//    fn len(&self, extra: U) -> usize {
-//        self.1.len() * 1 + self.1.iter().map(|x| x.len(extra)).sum::<usize>()
-//    }
-//    fn push_into(&self, extra: U, buffer: &mut Vec<&str>) {
-//        let mut joiner = "";
-//        for x in self.1 {
-//            buffer.push(joiner);
-//            joiner = self.0;
-//            x.push_into(extra, buffer);
-//        }
-//    }
-//}

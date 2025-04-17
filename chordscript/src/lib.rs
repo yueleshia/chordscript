@@ -10,30 +10,44 @@ pub mod parser;
 mod reporter;
 pub mod templates;
 
-pub use crate::parser::{lexemes, shortcuts, keyspaces};
+pub use parser::{lexemes, shortcuts, keyspaces};
+pub use templates::{Consumer, PreallocPush};
+
 
 /****************************************************************************
  * Integration Tests
  ****************************************************************************/
 #[test]
 fn on_file() {
-    let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
+    //let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
+    let path = concat!("./wm-shortcuts");
     let file = std::fs::read_to_string(path).unwrap();
-    let _lexemes = lexemes::lex(&file).unwrap();
+    let _lexemes = log(lexemes::lex(&file));
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
     //println!("\n~~~~~~\n");
-    let _shortcuts = shortcuts::parse_unsorted(_lexemes).unwrap();
+    let _shortcuts = log(shortcuts::parse_unsorted(_lexemes));
 
     // I should not use len() check with externally defined file, but it is
     // the quickest check to see if we altered the algorithm significantly
     println!("~~~~\n{}", _shortcuts.to_iter().count());
     let mut lock = std::io::stdout();
-    templates::Templates::DebugShortcuts
-        .pipe(&_shortcuts, &mut lock)
-        .expect("unreachable");
+    let ty = templates::Templates::ShellScript;
+    ty.pipe_string(&_shortcuts, &mut String::with_capacity(ty.len(&_shortcuts)));
+    ty.pipe_stdout(&_shortcuts, &mut lock);
     println!("~~~~");
     //let _keyspaces = keyspace::process(&_shortcuts);
     //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
+}
+
+#[cfg(test)]
+fn log<T, E: std::fmt::Display>(wrapped: Result<T, E>) -> T {
+    match wrapped {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 #[test]
