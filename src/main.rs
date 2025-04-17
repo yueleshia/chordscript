@@ -1,5 +1,5 @@
 // run: cargo test -- --nocapture
-//run: cargo run --release
+// run: cargo run --release
 
 #![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
@@ -16,21 +16,102 @@ mod structs;
 
 use deserialise::Print;
 use std::fs;
+use std::io::{self, Write};
 
 fn main() {
-    let file = fs::read_to_string("../../config.txt").unwrap();
-    let lexemes = lexer::process(file.as_str()).unwrap();
-    let parsemes = parser::process(&lexemes).unwrap();
+    let args: Vec<String> = std::env::args().collect();
+    match parse_args(&args) {
+        Ok(()) => std::process::exit(0),
+        Err(Errors::Cli(err)) => eprintln!("{}", err.to_string()),
+        Err(Errors::Io(err)) => eprintln!("{}", err.to_string()),
+        Err(Errors::Parse(err)) => eprintln!("{}", err.to_string_custom()),
+    }
+    std::process::exit(1);
+}
 
-    let buffer = &mut String::new();
-    //deserialise::ListPreview(&parsemes).push_string_into(buffer);
-    //deserialise::Shellscript(&parsemes).push_string_into(buffer);
+const DESCRIPTION: &str = "\
+Hello";
 
-    let _keyspaces = keyspace::process(&parsemes);
-    //deserialise::KeyspacePreview(&_keyspaces).push_string_into(buffer);
-    //deserialise::I3(&_keyspaces).push_string_into(buffer);
-    deserialise::I3Shell(&_keyspaces).push_string_into(buffer);
-    println!("{}", buffer);
+fn add(opts: &mut getopts::Options, is_required: bool, a: &str, b: &str, c: &str, d: &str) {
+    if is_required {
+        opts.reqopt(a, b, c, d);
+    } else {
+        opts.optopt(a, b, c, d);
+    }
+}
+
+fn options(need_config: bool, need_script: bool) -> getopts::Options {
+    let mut opts = getopts::Options::new();
+    opts.optflag("h", "help", "print this help menu");
+    add(
+        &mut opts,
+        need_script,
+        "s",
+        "script",
+        "File to output a shellscript",
+        "FILENAME",
+    );
+    add(
+        &mut opts,
+        need_config,
+        "c",
+        "config",
+        "The config file that specifies hotkeys are we want to compile",
+        "FILENAME",
+    );
+    opts
+}
+
+enum Errors {
+    Cli(getopts::Fail),
+    Io(io::Error),
+    Parse(reporter::MarkupError),
+}
+//run: cargo run -- keyspaces --config $HOME/interim/hk/config.txt #-s $HOME/interim/hk/script.sh
+fn parse_args(args: &[String]) -> Result<(), Errors> {
+    let program = &args[0];
+    let args = &args[1..];
+    {
+        let opts = options(false, false);
+        if opts.parse(args).map_err(Errors::Cli)?.opt_present("h") {
+            println!("{}\n{}", program, opts.usage(DESCRIPTION));
+            return Ok(());
+        }
+    }
+
+    let pargs = options(true, false).parse(args).map_err(Errors::Cli)?;
+
+    let file = fs::read_to_string(pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
+    let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
+    let parsemes = parser::process(&lexemes).map_err(Errors::Parse)?;
+
+    match pargs.free.get(0).map(String::as_str) {
+        Some("i3") => {
+            let pargs = options(true, true).parse(args).map_err(Errors::Cli)?;
+            let script_pathstr = pargs.opt_str("s").unwrap();
+
+            let shell = deserialise::Shellscript(&parsemes).to_string_custom();
+            let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
+            script_file
+                .write_all(shell.as_bytes())
+                .map_err(Errors::Io)?;
+
+            let keyspaces = keyspace::process(&parsemes);
+            let i3_config = deserialise::I3Shell(&keyspaces);
+            let mut buffer = String::with_capacity(i3_config.string_len());
+            i3_config.push_string_into(&mut buffer);
+            println!("{}", buffer);
+        }
+        Some("list") => println!("{}", deserialise::ListPreview(&parsemes).to_string_custom()),
+        Some("keyspaces") => println!(
+            "{}",
+            deserialise::KeyspacePreview(&keyspace::process(&parsemes)).to_string_custom()
+        ),
+
+        Some("sh") => println!("{}", deserialise::Shellscript(&parsemes).to_string_custom()),
+        x => panic!("Invalid command {:?}", x),
+    }
+    Ok(())
 }
 
 #[test]
@@ -68,10 +149,10 @@ fn interpret() {
         //_lexemes.to_iter().for_each(debug_print_lexeme);
 
         let parsemes = parser::process(&_lexemes)?;
-        //println!("{}", deserialise::ListPreview(&parsemes).to_string_custom());
+        println!("{}", deserialise::ListPreview(&parsemes).to_string_custom());
         let keyspaces = keyspace::process(&parsemes);
         //println!("{}", deserialise::KeyspacePreview(&keyspaces).to_string_custom());
-        println!("{}", deserialise::I3(&keyspaces).to_string_custom());
+        //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
         Ok(())
     })() {
         println!("{}", err);

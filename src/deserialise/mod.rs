@@ -46,7 +46,7 @@ pub trait Print {
 
     // @TODO impl a direct print to stdout buffer and benchmark
 
-    #[cfg(debug_assertions)]
+    //#[cfg(debug_assertions)]
     fn to_string_custom(&self) -> String;
 }
 
