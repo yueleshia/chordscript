@@ -24,7 +24,7 @@ main() {
 my_make() {
   case "${1}"
     # @TODO implement -r/--runner
-    in i3) parse "${XDG_CONFIG_HOME}/i3/config" i3 \
+    in i3) parse "${XDG_CONFIG_HOME}/i3/config" i3-shell \
       -c "${SHORTCUTS}" -s "${SCRIPTS}/shortcuts.sh" #-r "shortcuts.sh"
     ;; sh|shortcuts|shortcuts-debug|keyspaces)
       parse "${XDG_CONIG_HOME}" "${1}" -c "${SHORTCUTS}"

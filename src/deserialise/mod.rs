@@ -20,16 +20,18 @@ macro_rules! reexport {
 
 reexport!(keyspace_preview::*); // Default printer
 reexport!(list_preview::*); // Default printer
-//reexport!(shellscript::Shellscript); // For external file to be used by others
+reexport!(shellscript::*); // For external file to be used by others
 //
-//reexport!(i3::I3); // No way to escape newlines, so should avoid this
-//reexport!(i3_shell::I3Shell);
+//reexport!(i3::*); // No way to escape newlines, so should avoid this
+reexport!(i3_shell::*);
 // @TODO leftwm
 // @TODO sxhkd
 // @TODO dwm
 // @TODO external shellscript that handles adapting for us
 
 use std::cmp;
+
+use crate::constants::{KEYCODES,MODIFIERS};
 use crate::precalculate_capacity_and_build;
 use crate::structs::{Chord, Cursor, WithSpan};
 
@@ -379,6 +381,11 @@ impl<'list, 'filestr> Print for DeserialisedChord<'list, 'filestr> {
              buffer.push_str(keycodes[*key]);
         };
     });
+}
+
+#[inline]
+fn default_print_chord<'a, 'b>(chord: &'a Chord<'b>) -> DeserialisedChord<'a, 'b> {
+    DeserialisedChord(" ", chord, &KEYCODES, &MODIFIERS)
 }
 
 /****************************************************************************

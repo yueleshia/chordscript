@@ -1,8 +1,8 @@
 // run: cargo test
-//run: cargo test -- --nocapture
+// run: cargo test -- --nocapture
 // run: cargo run -- --help
 // run: cargo run --release
-// run: cargo run -- keyspaces --config $XDG_CONFIG_HOME/rc/wm-shortcuts #-s $HOME/interim/hk/script.sh
+//run: cargo run -- i3-shell --config $XDG_CONFIG_HOME/rc/wm-shortcuts -s $HOME/interim/hk/script.sh
 
 //#![allow(dead_code)]
 #![allow(clippy::string_lit_as_bytes)]
@@ -21,8 +21,7 @@ mod structs;
 
 use deserialise::Print;
 use std::fs;
-//use std::io::{self, Write};
-use std::io;
+use std::io::{self, Write};
 
 const LONG_HELP: &str = "\
 THIS IS WIP
@@ -38,6 +37,12 @@ fn main() {
         "c",
         "config",
         "The file containing the shortcuts",
+        "FILENAME",
+    );
+    options.reqopt(
+        "s",
+        "script",
+        "A file that will hold the supporting shellscript to be used",
         "FILENAME",
     );
 
@@ -107,16 +112,30 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
     }
 
     match matches.free.get(0).map(String::as_str) {
-        Some("i3") => {
-            //let script_pathstr = pargs.opt_str("s").unwrap();
-            //let shell = deserialise::Shellscript(&shortcuts).to_string_custom();
-            //let mut script_file = fs::File::create(script_pathstr).map_err(Errors::Io)?;
-            //script_file.write_all(shell.as_bytes()).map_err(Errors::Io)?;
+        //Some("i3") => {
+        //}
 
-            //let i3_config = deserialise::I3Shell(&keyspaces);
-            //let mut buffer = String::with_capacity(i3_config.string_len());
-            //i3_config.push_string_into(&mut buffer);
+        // Write to a shell script that i3 config will use
+        Some("i3-shell") => {
+            let support_path = matches.opt_str("s").expect(
+                "Please specify a -s file for writing the shellscript that \
+                helps i3. We need this because if we included commands \
+                directly in the i3 config, we would need to escape a lot.");
+
+            process!(let shortcuts = @parse matches);
+            let keyspaces = keyspace::process(&shortcuts);
+
+            let i3_config = deserialise::I3Shell(&keyspaces);
+            let mut buffer = String::with_capacity(i3_config.string_len());
+
+            let mut script_file = fs::File::create(support_path).map_err(Errors::Io)?;
+            deserialise::Shellscript(&shortcuts).push_string_into(&mut buffer);
+            script_file.write_all(buffer.as_bytes()).map_err(Errors::Io)?;
             //println!("{}", buffer);
+
+            buffer.clear();
+            i3_config.push_string_into(&mut buffer);
+            println!("{}", buffer);
         }
         Some("shortcuts") | Some("shortcut") | Some("s") => {
             process!(let shortcuts = @parse matches);

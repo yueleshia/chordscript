@@ -1,7 +1,7 @@
 use crate::constants::KEYCODES;
-use crate::deserialise::{DeserialisedChord, ListChord, Print};
+use crate::deserialise::{DeserialisedChord, default_print_chord, Print};
 use crate::keyspace::{Action, KeyspaceOwner};
-use crate::structs::{Chord, Shortcut, WithSpan};
+use crate::structs::{Chord, Shortcut};
 use crate::{array, define_buttons, precalculate_capacity_and_build};
 
 pub struct I3Shell<'keyspaces, 'parsemes, 'filestr>(pub &'keyspaces KeyspaceOwner<'parsemes, 'filestr>);
@@ -66,7 +66,7 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
                     + trigger.string_len()
                     + exec.len()
                     + runner.len()
-                    + array!(@len_join { hotkey } |> ListChord, " ; ")
+                    + array!(@len_join { hotkey } |> default_print_chord, " ; ")
                     + command_close.len(),
         } => match &self.0 {
             Action::SetState(title) => {
@@ -85,7 +85,7 @@ impl<'keyspaces, 'parsemes, 'filestr> Print for I3Action<'keyspaces, 'parsemes, 
                 trigger.push_string_into(buffer);
                 buffer.push_str(exec);
                 buffer.push_str(runner);
-                array!(@push_join { hotkey } |> ListChord, " ; ", |> buffer);
+                array!(@push_join { hotkey } |> default_print_chord, " ; ", |> buffer);
                 buffer.push_str(command_close);
             }
         };
@@ -107,10 +107,10 @@ define_buttons!(@MODS I3_TITLE_MODIFIERS test_title {
     Super => "M",
 });
 
-fn i3_wrap_chord<'a, 'b>(chord: &'a WithSpan<'b, Chord>) -> DeserialisedChord<'a, 'b> {
+fn i3_wrap_chord<'a, 'b>(chord: &'a Chord<'b>) -> DeserialisedChord<'a, 'b> {
     DeserialisedChord("+", chord, &KEYCODES, &I3_MODIFIERS)
 }
-fn i3_wrap_title<'a, 'b>(chord: &'a WithSpan<'b, Chord>) -> DeserialisedChord<'a, 'b> {
+fn i3_wrap_title<'a, 'b>(chord: &'a Chord<'b>) -> DeserialisedChord<'a, 'b> {
     DeserialisedChord("+", chord, &KEYCODES, &I3_TITLE_MODIFIERS)
 }
 
