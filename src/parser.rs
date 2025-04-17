@@ -5,7 +5,7 @@ use crate::reporter::MarkupError;
 use crate::structs::{Chord, Shortcut, WithSpan};
 
 use std::ops::Range;
-type Output = Result<(), MarkupError>;
+type Output<T> = Result<T, MarkupError>;
 
 //run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list
 // run: cargo test
@@ -50,26 +50,26 @@ impl<'filestr> ShortcutOwner<'filestr> {
  * Main Parse Workflow
  ******************************************************************************/
 // Sorting is necessary for 'verify_no_overlap()'
-pub fn parse(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
+pub fn parse(input: LexOutput) -> Output<ShortcutOwner> {
     let mut owner = parse_work(input)?;
     owner.sort();
-    verify_no_overlap(&owner).unwrap();
+    verify_no_overlap(&owner)?;
     Ok(owner)
 }
 
 // This
-pub fn parse_unsorted(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
+pub fn parse_unsorted(input: LexOutput) -> Output<ShortcutOwner> {
     let mut owner = parse_work(input)?;
     let original_order = owner.shortcuts.clone();
     owner.sort();
-    verify_no_overlap(&owner).unwrap();
+    verify_no_overlap(&owner)?;
     Ok(ShortcutOwner {
         chords: owner.chords,
         scripts: owner.scripts,
         shortcuts: original_order,
     })
 }
-fn parse_work(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
+fn parse_work(input: LexOutput) -> Output<ShortcutOwner> {
     //let mut shortcuts: Vec<Chord> = Vec::with_capacity(input.head_aggregate_size);
     let (permutation_count, head_aggregate_size, body_aggregate_size) =
         input.entry_stats.iter().fold((0, 0, 0), |(a, b, c), s| {
@@ -171,8 +171,7 @@ fn parse_work(input: LexOutput) -> Result<ShortcutOwner, MarkupError> {
 
 // Verify that all hotkeys are accessible (and no duplicates)
 // e.g. 'super + a' and 'super + a; super + b' cannot be used at the same time
-//fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), MarkupError> {
-fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), String> {
+fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Output<()> {
     // Check 'sorted_shortcuts' is actually sorted
     debug_assert!(
         {
@@ -210,7 +209,10 @@ fn verify_no_overlap(sorted_shortcuts: &ShortcutOwner) -> Result<(), String> {
                     .map(|chord| chord.sources.join(" "))
                     .collect::<Vec<_>>()
                     .join(" ; ");
-                Err(format!("{}\nconflicts with\n{}", prev_hotkey, curr_hotkey))
+                //MarkupError::from_str()
+                todo!("have not created span errors yet\n\
+                    {}\nconflicts with\n{}", prev_hotkey, curr_hotkey
+                    );
             } else {
                 Ok(curr)
             }
@@ -237,7 +239,7 @@ fn parse_head_lex_into_chords<'filestr>(
     storage: &mut ThreadLocalStorage<'_, 'filestr>,
     stats: &PostLexEntry,
     lexemes: &[Lexeme<'filestr>],
-) -> Output {
+) -> Output<()> {
     let mut index = 0;
     let mut keys_added = 0;
     for i in 0..stats.permutations {
@@ -303,7 +305,7 @@ fn parse_body_lex_into_scripts<'a, 'filestr>(
 }
 
 impl<'filestr> Chord<'filestr> {
-    fn add(&mut self, key: &'filestr str, keys_added: usize) -> Output {
+    fn add(&mut self, key: &'filestr str, keys_added: usize) -> Output<()> {
         //println!("{}", self);
         if let Some(m) = MODIFIERS.iter().position(|m| *m == key) {
             let as_flag = 1 << m;

@@ -1,4 +1,6 @@
 use crate::constants::SEPARATOR;
+use crate::reporter::MarkupError;
+use crate::structs::Cursor;
 
 use std::mem::{replace, swap};
 
@@ -8,8 +10,9 @@ use std::mem::{replace, swap};
 const NEWLINE: &str = "\n";
 
 type Range = std::ops::Range<usize>;
-pub type StepError = String;
-type PassOutput<'filestr> = Result<Option<Lexeme<'filestr>>, StepError>;
+type Output<T> = Result<T, MarkupError>;
+type StepOutput<'filestr> = Output<Option<Lexeme<'filestr>>>;
+
 
 //run: cargo build; time cargo run -- debug-shortcuts -c $XDG_CONFIG_HOME/rc/wm-shortcuts keyspace-list ./keyspace-list.sh api
 // run: cargo test
@@ -44,7 +47,7 @@ pub struct PostLexEntry {
     pub tail: usize,
 }
 
-pub fn lex(input: &str) -> Result<LexOutput, String> {
+pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
     let entry_estimate = input
         .lines()
         .map(|line| line.chars().next().unwrap_or(' '))
@@ -92,12 +95,14 @@ pub fn lex(input: &str) -> Result<LexOutput, String> {
                 fragments.push(lexeme)
             }
             fsm.calculate_entry_size(); // @VOLATILE: After the `emit_body()`
-            Ok(())
+            Ok(None)
         }
-        State::Head if fsm.is_placeholder => Err(fsm.walker.fmt_err(END_BEFORE_PLACEHOLDER_CLOSE)),
-        State::Head => Err(fsm.walker.fmt_err(END_BEFORE_HEAD_CLOSE)),
+        State::Head if fsm.is_placeholder => {
+            fsm.walker.error_at_current(END_BEFORE_PLACEHOLDER_CLOSE)
+        }
+        State::Head => fsm.walker.error_at_current(END_BEFORE_HEAD_CLOSE),
         State::BEscape | State::HBrackets | State::BBrackets => {
-            Err(fsm.walker.fmt_err(END_BEFORE_BRACKET_CLOSE))
+            fsm.walker.error_at_current(END_BEFORE_BRACKET_CLOSE)
         }
     }?;
 
@@ -169,7 +174,7 @@ struct Fsm<'a> {
  * The handlers for each 'State::' of the 'Fsm'
  ******************************************************************************/
 #[inline]
-fn jump_init<'a>(fsm: &mut Fsm<'a>) -> PassOutput<'a> {
+fn jump_init<'a>(fsm: &mut Fsm<'a>) -> StepOutput<'a> {
     while let Some(peek) = fsm.walker.peek() {
         match (fsm.walker.curr_char, peek) {
             ('\n', '#') => fsm.walker.eat_till_newline(),
@@ -185,12 +190,12 @@ fn jump_init<'a>(fsm: &mut Fsm<'a>) -> PassOutput<'a> {
 
             ('\n', _) => {}
             _ => {
-                return Err(fsm.walker.fmt_err(
+                return fsm.walker.error_at_current(
                     "Valid starting characters for a line are:\n\
                     - '#' (comments),\n\
                     - '!' (placeholders),\n\
                     - '|' (commands)",
-                ))
+                )
             }
         }
         fsm.walker.next();
@@ -200,13 +205,13 @@ fn jump_init<'a>(fsm: &mut Fsm<'a>) -> PassOutput<'a> {
     Ok(None)
 }
 
-fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
     debug_assert!(!SEPARATOR.contains(&'!'));
     debug_assert!(!SEPARATOR.contains(&'|'));
 
     match (ch, fsm.walker.peek()) {
         ('\n', Some('#')) => {
-            let before_newline = fsm.cursor.range_to(fsm.walker.prev);
+            let before_newline = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.eat_till_newline();
             fsm.cursor.move_to(fsm.walker.post);
             fsm.emit_head(&fsm.original[before_newline])
@@ -224,7 +229,7 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 
         (';', _) => {
             // i.e. cursor is pointing at semicolon
-            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let semicolon = fsm.cursor.move_to(fsm.walker.post);
             fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
@@ -246,38 +251,38 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 
             // Change to State::Body
             // i.e. cursor is pointing at the bar
-            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let bar = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[bar]);
             fsm.mark_body_start(); // @VOLATILE: After `emit_h_chord()`
             lexeme
         }
 
-        ('!', _) if !fsm.is_placeholder => Err(fsm.walker.fmt_err(
+        ('!', _) if !fsm.is_placeholder => fsm.walker.error_at_current(
             "You are currently defining a head, not a placeholder. \
                 Did you mean to use '|' instead?",
-        )),
+        ),
         ('!', _) => {
             fsm.change_state(State::Body);
 
             // Change to State::Body
             // i.e. cursor is pointing at the exclamation
-            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let exclaim = fsm.cursor.move_to(fsm.walker.post);
             let lexeme = fsm.emit_h_chord(&fsm.original[exclaim]);
             fsm.mark_body_start(); // @VOLATILE: after `emit_p_chord()`
             lexeme
         }
-        ('|', _) => Err(fsm.walker.fmt_err(
+        ('|', _) => fsm.walker.error_at_current(
             "You are currently defining a placeholder, not a head. \
                 Did you mean to use '!' instead?",
-        )),
+        ),
 
         /**********************************/
-        ('{', _) => Err(fsm.walker.fmt_err(
+        ('{', _) => fsm.walker.error_at_current(
             "Missing a second opening curly brace. \
             Need '{{' to start an enumeration",
-        )),
+        ),
 
         (_, Some('|' | '!' | ';')) => {
             let before_head_end = fsm.cursor.move_to(fsm.walker.post);
@@ -288,21 +293,21 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 }
 
 #[inline]
-fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         ('\n', Some('#')) => {
-            let before_newline = fsm.cursor.range_to(fsm.walker.prev);
+            let before_newline = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.eat_till_newline();
             fsm.cursor.move_to(fsm.walker.post);
             fsm.emit_h_choice(&fsm.original[before_newline])
         }
-        ('|', _) => Err(fsm
+        ('|', _) => fsm
             .walker
-            .fmt_err("Unexpected bar '|'. Close the enumeration first with '}}'")),
-        ('\\', _) => Err(fsm.walker.fmt_err(
+            .error_at_current("Unexpected bar '|'. Close the enumeration first with '}}'"),
+        ('\\', _) => fsm.walker.error_at_current(
             "You cannot escape characters with backslash '\\' \
                 in the hotkey definition portion",
-        )),
+        ),
         (',', _) => {
             let before_comma = fsm.cursor.move_to(fsm.walker.prev);
             fsm.walker.eat_separator();
@@ -314,7 +319,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
         ('}', Some('}')) => {
             fsm.revert_state();
 
-            let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
+            let before_bracket = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.next(); // Skip second '}'
             fsm.walker.eat_separator();
             fsm.max_permutes.0 = fsm.max_permutes.0.max(fsm.member_num + 1);
@@ -324,7 +329,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 
         (';', _) => {
             // i.e. cursor is pointing at semicolon
-            debug_assert!(fsm.cursor.range_to(fsm.walker.prev).is_empty());
+            debug_assert!(fsm.cursor.span_to(fsm.walker.prev).is_empty());
             let semicolon = fsm.cursor.move_to(fsm.walker.post);
             fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
@@ -339,10 +344,10 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             fsm.emit_h_choice(&fsm.original[before_blank])
         }
 
-        ('}', _) => Err(fsm.walker.fmt_err(
+        ('}', _) => fsm.walker.error_at_current(
             "Missing a second closing curly brace. \
             Need '}}' to close an enumeration",
-        )),
+        ),
 
         (_, Some(';')) => {
             let before_chord_end = fsm.cursor.move_to(fsm.walker.post);
@@ -353,7 +358,7 @@ fn step_h_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
     }
 }
 #[inline]
-fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         // Note: Single '{' is not an error, thus doing a different match
         ('\n', Some('#')) => {
@@ -391,7 +396,7 @@ fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 }
 
 #[inline]
-fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
     match (ch, fsm.walker.peek()) {
         ('\n', Some('#')) => {
             let before_newline = fsm.cursor.move_to(fsm.walker.post);
@@ -407,22 +412,22 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             fsm.emit_b_choice(&fsm.original[before_backslash])
         }
 
-        ('|', _) if fsm.walker.last_char == '\n' => Err(fsm.walker.fmt_err(
+        ('|', _) if fsm.walker.last_char == '\n' => fsm.walker.error_at_current(
             "A '|' here conflicts with starting a new entry. \
             Close the enumeration first with '}}'.\n\
             If you want a '|' as the first character in line try:\n\
             - '\\n|' on the previous line or\n\
             - '\\|' escaping it on this line.",
-        )),
+        ),
         (',', _) => {
-            let before_comma = fsm.cursor.range_to(fsm.walker.prev);
+            let before_comma = fsm.cursor.span_to(fsm.walker.prev);
             let frag = fsm.emit_b_member(&fsm.original[before_comma]);
             fsm.cursor.move_to(fsm.walker.post); // After ','
             fsm.member_num += 1; // @VOLATILE: ensure this is after emit
             frag
         }
         ('}', Some('}')) => {
-            let before_bracket = fsm.cursor.range_to(fsm.walker.prev);
+            let before_bracket = fsm.cursor.span_to(fsm.walker.prev);
             fsm.walker.next(); // Skip the second '}'
             fsm.change_state(State::Body);
             fsm.max_permutes.1 = fsm.max_permutes.1.max(fsm.member_num + 1);
@@ -434,7 +439,7 @@ fn step_b_brackets<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
 }
 
 #[inline]
-fn step_b_escape<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
+fn step_b_escape<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
     fsm.revert_state();
     match ch {
         // Emit the next character
@@ -454,10 +459,10 @@ fn step_b_escape<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             fsm.cursor.move_to(fsm.walker.post);
             Ok(None)
         }
-        _ => Err(fsm.walker.fmt_err(
+        _ => fsm.walker.error_at_current(
             "This character is not eligible for escaping. \
             You might need to escape a previous '\\'.",
-        )),
+        ),
     }
 }
 
@@ -473,11 +478,12 @@ impl<'a> Fsm<'a> {
 
             (State::BBrackets, State::BEscape) => {}
             (State::BEscape, State::BBrackets) => {}
-            (a, b) => unreachable!(
-                "\n{}",
-                self.walker
-                    .fmt_err(format!("Invalid state transition {:?} -> {:?}", a, b).as_str())
-            ),
+            (a, b) => {
+                let m = format!("Invalid state transition {:?} -> {:?}", a, b);
+                let err = self.walker.error_at_current(m.as_str()).unwrap_err();
+                use crate::deserialise::Print;
+                unreachable!("{}", err.to_string_custom());
+            }
         }
 
         self.old_state = replace(&mut self.state, target_state);
@@ -509,7 +515,7 @@ macro_rules! define_emitter {
     )*) => {
         $(
             #[inline]
-            fn $fn(&mut $self, $frag: &'a str) -> PassOutput<'a> {
+            fn $fn(&mut $self, $frag: &'a str) -> StepOutput<'a> {
                 $(define_emitter!(@$check_empty $frag);)?
                 $self.fragment_len += 1;
                 $expr
@@ -562,13 +568,13 @@ impl<'a> Fsm<'a> {
         // Inside of body '{{' and '}}', when before ','
         @check_frag_empty emit_b_member(self, frag) {
             if self.member_num > self.max_permutes.0 {
-                return Err(self.walker.fmt_err(
+                return self.walker.error_at_current(
                     "The number of body permutations cannot exceed the number \
                     of head permutations.\n\
                     Either delete the highlighted body portion or add more \
                     options for the head.\n\
                     If you want a comma as a text, you escape like '\\,'.",
-                ))
+                )
             }
             self.body_count.1 += 1;
             Ok(Some(Lexeme::BChoice(self.member_num, frag)))
@@ -613,22 +619,6 @@ impl<'a> Fsm<'a> {
     }
 }
 
-#[derive(Debug)]
-struct Cursor(usize);
-impl Cursor {
-    #[inline]
-    fn move_to(&mut self, till: usize) -> Range {
-        let range = self.range_to(till);
-        self.0 = till;
-        range
-    }
-
-    #[inline]
-    fn range_to(&self, till: usize) -> Range {
-        self.0..till
-    }
-}
-
 /******************************************************************************
  * A 'std::str::Chars' wrapper for use in 'first_pass()'
  ******************************************************************************/
@@ -641,8 +631,6 @@ struct CharsWithIndex<'a> {
     // And they always be on apart, 'prev' having the same index as 'iter'
     prev: usize, // the left border of the current character
     post: usize, // the right border of the current character
-    row: usize,
-    col: usize,
 
     last_char: char,
     pub(self) curr_char: char,
@@ -663,8 +651,6 @@ impl<'a> CharsWithIndex<'a> {
             orig: text,
             prev: 0, // equal to 'post' at the beginning
             post: 0,
-            row: 0,
-            col: 0,
 
             last_char,
             curr_char,
@@ -697,18 +683,23 @@ impl<'a> CharsWithIndex<'a> {
         }
     }
 
-    fn fmt_err(&self, msg: &str) -> String {
-        debug_assert!(self.row >= 1);
-        let row_string = self.row.to_string();
-        let line = self.orig.lines().nth(self.row - 1).unwrap_or("");
-        let spaces = " ".repeat(row_string.len());
-        let term_width = line.chars().take(self.col).map(|_| 1);
-        let arrows = "^".repeat(term_width.sum());
-        format!(
-            "    {} | {}\n    {}   {}\n{}",
-            row_string, line, spaces, arrows, msg
-        )
+    fn error_at_current(&self, msg: &str) -> StepOutput<'a> {
+        let current = &self.orig[self.prev..self.post];
+        Err(MarkupError::from_str(self.orig, current, msg.to_string()))
     }
+
+    //fn fmt_err(&self, msg: &str) -> String {
+    //    debug_assert!(self.row >= 1);
+    //    let row_string = self.row.to_string();
+    //    let line = self.orig.lines().nth(self.row - 1).unwrap_or("");
+    //    let spaces = " ".repeat(row_string.len());
+    //    let term_width = line.chars().take(self.col).map(|_| 1);
+    //    let arrows = "^".repeat(term_width.sum());
+    //    format!(
+    //        "    {} | {}\n    {}   {}\n{}",
+    //        row_string, line, spaces, arrows, msg
+    //    )
+    //}
     //fn fmt_span_err(&self, msg: &str) -> Result<(), String> {
     //    debug_assert!(self.row >= 1);
     //    Err("".into())
@@ -730,12 +721,6 @@ impl<'a> Iterator for CharsWithIndex<'a> {
 
             self.last_char = self.curr_char;
             self.curr_char = c;
-
-            self.col += 1;
-            if self.last_char == '\n' {
-                self.row += 1;
-                self.col = 1;
-            }
 
             Some(c)
         } else {

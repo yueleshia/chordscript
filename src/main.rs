@@ -88,7 +88,7 @@ fn subcommands(matches: getopts::Matches) -> Result<(), Errors> {
         (let $lexemes:ident = @lex $matches:ident) => {
             let path = $matches.opt_str("c").unwrap();
             let file = fs::read_to_string(path).map_err(Errors::Io)?;
-            let $lexemes = lexer::lex(&file).map_err(Errors::Debug)?;
+            let $lexemes = lexer::lex(&file).map_err(Errors::Parse)?;
             //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
         };
         (let $shortcuts:ident = @parse $matches:ident) => {
