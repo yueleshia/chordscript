@@ -1,10 +1,10 @@
 //run: cargo test -- --nocapture
 
 #![allow(dead_code)]
+mod constants;
 mod errors;
 mod lexer;
-mod messages;
-mod constants;
+mod reporter;
 
 const DEV_PRINT: bool = false;
 
@@ -25,14 +25,12 @@ fn interpret() {
 |super shift q|"#;
     //println!("{}", _file);
 
-    let _error = errors::MarkupLineError::new("what a failure", _file, 3, 2, 5);
+    let _error = reporter::MarkupError::new(_file, &_file[20..35], "what a failure".to_string());
     let lexemes = lexer::process(_file).unwrap();
-    //println!("{}", error);
+    println!("{}", _error);
 
     for (i, x) in lexemes.heads.iter().enumerate() {
         println!("{}: {:?}", i, x);
     }
     //println!("{:#?}", tokens.bodys);
-
-
 }

@@ -1,7 +1,7 @@
 //run: cargo test -- --nocapture
 
-use crate::errors::MarkupLineError;
-use crate::messages;
+use crate::reporter::MarkupError;
+use crate::errors;
 use crate::constants::{MODIFIERS, KEYCODES, SEPARATOR, KEYSTR_UTF8_MAX_LEN};
 use super::DEV_PRINT;
 
@@ -35,7 +35,7 @@ macro_rules! define_syntax {
         fn count_memory_needed(
             $count_fsm: &mut FileIter,
             item: <FileIter as Iterator>::Item,
-        ) -> LexerCapacities {
+        ) -> Result<LexerCapacities, MarkupError> {
             match $count_fsm.state {
                 $(State::$state => match item {
                     $( $( $pattern )|+ $( if $guard )? => $counter,)*
@@ -54,6 +54,7 @@ macro_rules! define_syntax {
                 },)*
             }
         }
+
     };
 }
 
@@ -81,14 +82,14 @@ pub enum BodyLexeme<'a> {
 
 define_syntax! { count_fsm, lex_fsm, tokens,
     Head {
-        (',', index, _) => panic!(messages::HEAD_COMMA_OUTSIDE_BRACKETS), {};
-        ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
+        (',', i, _) => count_fsm.report(i, i + ','.len_utf8(), errors::HEAD_COMMA_OUTSIDE_BRACKETS), {};
+        ('\\', i, _) => count_fsm.report(i, i + '\\'.len_utf8(), errors::HEAD_NO_ESCAPING), {};
 
         ('|', index, _) =>
             {
                 devprint!("head |{:?}| 1", count_fsm.cursor_move_to(index));
                 count_fsm.state = State::Body;
-                (0, 1, 0)
+                Ok((0, 1, 0))
             }, {
                 let keystr = lex_fsm.cursor_move_to(index);
                 tokens.head_push_key(keystr);
@@ -96,18 +97,18 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 lex_fsm.state = State::Body;
             };
 
-        ('{', index, _) =>
+        ('{', i, _) =>
             {
                 if let Some(('{', _, _)) = count_fsm.next() { // Second '{'
-                    devprint!("head |{:?}| 2", count_fsm.cursor_move_to(index));
+                    devprint!("head |{:?}| 2", count_fsm.cursor_move_to(i));
                     count_fsm.eat_charlist(&SEPARATOR);
                     count_fsm.state = State::HeadBrackets;
-                    (0, 2, 0)
+                    Ok((0, 2, 0))
                 } else {
-                    panic!(messages::MISSING_LBRACKET);
+                    count_fsm.report(i + '{'.len_utf8(), i + "{{".len(), errors::MISSING_LBRACKET)
                 }
             }, {
-                let keystr = lex_fsm.cursor_move_to(index);
+                let keystr = lex_fsm.cursor_move_to(i);
                 tokens.head_push_key(keystr);
 
                 lex_fsm.next(); // Skip second '{'
@@ -125,7 +126,7 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 };
                 devprint!("head |{:?}| {}", count_fsm.cursor_move_to(index), capacity.1);
                 count_fsm.eat_charlist(&SEPARATOR);
-                capacity
+                Ok(capacity)
             }, {
                 let keystr = lex_fsm.cursor_move_to(index);
                 tokens.head_push_key(keystr);
@@ -138,7 +139,7 @@ define_syntax! { count_fsm, lex_fsm, tokens,
             };
 
 
-        (_, _index, _) => (0, 0, 0), {
+        (_, _index, _) => Ok((0, 0, 0)), {
             if lex_fsm.cursor_width(_index) > KEYSTR_UTF8_MAX_LEN {
                 panic!("Panic at the disco")
             }
@@ -146,21 +147,21 @@ define_syntax! { count_fsm, lex_fsm, tokens,
     }
 
     HeadBrackets {
-        ('|', _, _) => panic!(messages::HEAD_INVALID_CLOSE), {};
-        ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
+        ('|', i, _) => count_fsm.report(i, i + '|'.len_utf8(), errors::HEAD_INVALID_CLOSE), {};
+        ('\\', i, _) => count_fsm.report(i, i + '\\'.len_utf8(), errors::HEAD_NO_ESCAPING), {};
 
-        ('}', index, _) =>
+        ('}', i, _) =>
             {
                 if let Some(('}', _, _)) = count_fsm.next() { // second '}'
-                    devprint!("hb   |{:?}| 2", count_fsm.cursor_move_to(index));
+                    devprint!("hb   |{:?}| 2", count_fsm.cursor_move_to(i));
                     count_fsm.eat_charlist(&SEPARATOR);
                     count_fsm.state = State::Head;
-                    (0, 2, 0)
+                    Ok((0, 2, 0))
                 } else {
-                    panic!(messages::MISSING_RBRACKET);
+                    count_fsm.report(i + '}'.len_utf8(), i + "}}".len(), errors::MISSING_RBRACKET)
                 }
             }, {
-                let keystr = lex_fsm.cursor_move_to(index);
+                let keystr = lex_fsm.cursor_move_to(i);
                 tokens.head_push_key(keystr);
 
                 lex_fsm.next(); // Skip second '}'
@@ -179,7 +180,7 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 };
                 devprint!("head |{:?}| {}", count_fsm.cursor_move_to(index), capacity.1);
                 count_fsm.eat_charlist(&SEPARATOR);
-                capacity
+                Ok(capacity)
             }, {
                 let keystr = lex_fsm.cursor_move_to(index);
                 tokens.head_push_key(keystr);
@@ -192,7 +193,7 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 }
             };
 
-        _ => (0, 0, 0), {};
+        _ => Ok((0, 0, 0)), {};
     }
 
     Body {
@@ -202,7 +203,7 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 count_fsm.next(); // Skip '|'
                 count_fsm.eat_charlist(&SEPARATOR);
                 count_fsm.state = State::Head;
-                (0, 0, 1)
+                Ok((0, 0, 1))
             }, {
                 let include_newline = lex_fsm.cursor_move_to(index + 1);
                 tokens.bodys.push(BodyLexeme::Section(include_newline));
@@ -212,12 +213,12 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 lex_fsm.state = State::Head;
             };
 
-        _ => (0, 0, 0), {};
+        _ => Ok((0, 0, 0)), {};
     }
-    BodyBrackets { _ => (0, 0, 0), {}; }
+    BodyBrackets { _ => Ok((0, 0, 0)), {}; }
 }
 
-pub fn process(filestr: &str) -> Result<LexemeLists, MarkupLineError> {
+pub fn process(filestr: &str) -> Result<LexemeLists, MarkupError> {
     // Skip until first '|' at beginning of line
     let filestr = {
         let mut walker = filestr.chars();
@@ -237,7 +238,7 @@ pub fn process(filestr: &str) -> Result<LexemeLists, MarkupLineError> {
         let mut capacity = (0, 0, 0);
         let fsm = &mut FileIter::new(filestr);
         while let Some(item) = fsm.next() {
-            let (entries, head, body) = count_memory_needed(fsm, item);
+            let (entries, head, body) = count_memory_needed(fsm, item)?;
             capacity.0 += entries;
             capacity.1 += head;
             capacity.2 += body;
@@ -347,9 +348,9 @@ impl<'a> FileIter<'a> {
         }
     }
 
-    //fn report() -> Result<(), errors::MarkupLineError> {
-    //    return Err();
-    //}
+    fn report(&self, begin: usize, close: usize, message: &str) -> Result<LexerCapacities, MarkupError> {
+        Err(MarkupError::new(&self.source, &self.source[begin..close], message.to_string()))
+    }
 }
 
 impl<'a> Iterator for FileIter<'a> {
