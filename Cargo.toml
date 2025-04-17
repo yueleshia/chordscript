@@ -1,11 +1,19 @@
 [package]
-name = "hk"
+name = "chordscript-cli"
 version = "0.1.0"
 authors = ["Aryailia <Aryailia@users.noreply.github.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 unicode-width = "0.1.8"
 getopts = "0.2.0"
+
+[workspace]
+members = [
+  "chordscript",
+  #"web-server",
+  "chordscript-wasm",
+]
+

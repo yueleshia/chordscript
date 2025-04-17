@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type"/>
+    <style>
+body {
+  padding: 0px;
+  border:  0px;
+  margin:  0px;
+
+}
+
+.grid {
+  display: grid;
+  width:   100vw;
+  height:  100vh;
+  gap:     10px;
+  grid-template-areas:
+    "header   header header    header header"
+    "gutter-l left   gutter-m  right  gutter-r"
+  ;
+  grid-template-columns: 10px 1fr 10px 1fr 10px;
+  grid-template-rows:    30px 1fr;
+}
+
+header {
+  color:      #FFFFFF;
+  background: #333333;
+}
+header                  { width: 100%; }
+.left, .right, textarea { width: 100%; height: 97%; }
+
+header     { grid-area: header; }
+.left      { grid-area: left; }
+.right     { grid-area: right; }
+.gutter-l  { grid-area: gutter-l; }
+.gutter-m  { grid-area: gutter-m; }
+.gutter-r  { grid-area: gutter-r; }
+
+textarea {}
+
+    </style>
+  </head>
+  <body>
+    <div class="grid">
+
+      <header>header</header>
+      <div class="gutter-l"></div>
+      <div class="left"><textarea id="input">|super + d| dmenu run</textarea></div>
+      <div class="gutter-m"></div>
+      <div class="right"><textarea id="output">Please enable JavaScript for this to work.</textarea></div>
+      <div class="gutter-r"></div>
+    </div>
+    <!-- Note the usage of `type=module` here as this is an ES6 module -->
+    <script type="module">
+      // Use ES module import syntax to import functionality from the module
+      // that we have compiled.
+      //
+      // Note that the `default` import is an initialization function which
+      // will "boot" the module and make it ready to use. Currently browsers
+      // don't support natively imported WebAssembly as an ES module, but
+      // eventually the manual initialization won't be required!
+      import init, { add } from './pkg/chordscript_wasm.js';
+
+      var is_push_change = false;
+      function signal_change() { is_push_change = true; }
+
+      function side_effect() {
+        var input = document.getElementById("input").value;
+        document.getElementById("output").value = add(input);
+      }
+
+      console.log(frame_cursor);
+      var previous_timestamp = 0;
+      var frame_cursor = 0; // maintain an fps;
+      function debounced_timeout(timestamp) {
+        const threshold = 200; // 1000/200 = 5 fps;
+        const elapsed = timestamp  - previous_timestamp;
+        previous_timestamp = timestamp;
+
+        frame_cursor += elapsed;
+        if (frame_cursor > threshold) {
+          if (is_push_change) {
+            is_push_change = false;
+            side_effect();
+          }
+          frame_cursor = parseInt(frame_cursor) % threshold;
+        }
+        window.requestAnimationFrame(debounced_timeout);
+      }
+
+      (async function () {
+        console.log("Running wasm load");
+        await init();
+
+        // And afterwards we can use all the functionality defined in wasm.
+        document.getElementById("input").addEventListener("change", signal_change, false);
+        document.getElementById("input").addEventListener("keyup",  signal_change, false);
+        side_effect(); // compile and push the default value
+        window.requestAnimationFrame(debounced_timeout);
+      })();
+    </script>
+  </body>
+</html>
