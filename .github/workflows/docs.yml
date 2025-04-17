@@ -12,7 +12,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  publish: ${{ github.workspace }}/chordscript-wasm/publish
+  publish: chordscript-wasm/publish
+  #publish: ${{ github.workspace }}/chordscript-wasm/publish
 
 jobs:
   make_site:
@@ -27,7 +28,7 @@ jobs:
         run: rm .gitignore
 
       - name: Download wasm-pack
-        run:  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run:  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
 
       - name: Build with rust wasm-pack
         run:  |
