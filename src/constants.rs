@@ -88,6 +88,7 @@ build_available_keys! {
     };
 }
 
+#[cfg(test)]
 pub const KEYSTR_UTF8_MAX_LEN: usize = {
     let max_len = 0;
     let max_len = map!(
