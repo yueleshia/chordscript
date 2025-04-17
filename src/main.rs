@@ -34,47 +34,64 @@ fn interpret() {
     let _lexemes = lexer::process(_file).unwrap();
     //_lexemes.to_iter().for_each(print_lexeme);
     //_lexemes.to_iter().for_each(debug_print_lexeme);
+
     let parsemes = parser::process(&_lexemes).unwrap();
     let mut _hotkeys = parsemes.make_owned_view();
-    _hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
-    //_hotkeys.iter().for_each(|hk| println!("{}", hk));
-    keyspace::process(&parsemes).unwrap();
-
+    //_hotkeys.sort_unstable_by(|a, b| a.hotkey.cmp(b.hotkey));
+    //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
+    let _keyspaces = keyspace::process(&parsemes).unwrap();
+    keyspace::debug_print_keyspace_owner(&_keyspaces);
 }
 
 fn debug_print_lexeme(lexeme: lexer::Lexeme) {
-    let head = lexeme.head.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(" ");
-    let body = lexeme.body.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(" ");
+    let head = lexeme
+        .head
+        .iter()
+        .map(|x| format!("{:?}", x))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let body = lexeme
+        .body
+        .iter()
+        .map(|x| format!("{:?}", x))
+        .collect::<Vec<_>>()
+        .join(" ");
     print!("|{}|\n  {}\n\n", head, body);
 }
 fn print_lexeme(lexeme: lexer::Lexeme) {
-    use lexer::HeadLexeme;
+    use constants::{KEYCODES, MODIFIERS};
     use lexer::BodyLexeme;
-    use constants::{MODIFIERS, KEYCODES};
+    use lexer::HeadLexeme;
+    use structs::WithSpan;
 
-    let head = lexeme.head.iter()
+    let head = lexeme
+        .head
+        .iter()
         .filter_map(|head_lexeme| match head_lexeme {
-            HeadLexeme::Mod(k) => Some(MODIFIERS[*k]),
-            HeadLexeme::Key(k) => Some(KEYCODES[*k]),
-            HeadLexeme::ChoiceBegin => Some("{{"),
-            HeadLexeme::ChoiceDelim => Some(","),
-            HeadLexeme::ChoiceClose => Some("}}"),
-            HeadLexeme::ChordDelim => Some(";"),
-            HeadLexeme::Blank => None,
+            WithSpan(HeadLexeme::Mod(k), _, _) => Some(MODIFIERS[*k]),
+            WithSpan(HeadLexeme::Key(k), _, _) => Some(KEYCODES[*k]),
+            WithSpan(HeadLexeme::ChoiceBegin, _, _) => Some("{{"),
+            WithSpan(HeadLexeme::ChoiceDelim, _, _) => Some(","),
+            WithSpan(HeadLexeme::ChoiceClose, _, _) => Some("}}"),
+            WithSpan(HeadLexeme::ChordDelim, _, _) => Some(";"),
+            WithSpan(HeadLexeme::Blank, _, _) => None,
         })
         .collect::<Vec<_>>()
         .join(" ");
 
-    let body = lexeme.body
+    let body = lexeme
+        .body
         .iter()
         .map(|body_lexeme| match body_lexeme {
-            BodyLexeme::Section(s) => s.lines()
+            WithSpan(BodyLexeme::Section, _, _) => body_lexeme
+                .as_str()
+                .lines()
                 .map(|line| format!("{:?}", line))
                 .collect::<Vec<_>>()
                 .join("\n  "),
-            BodyLexeme::ChoiceBegin => "\n  {{\n    ".to_string(),
-            BodyLexeme::ChoiceDelim => ",\n    ".to_string(),
-            BodyLexeme::ChoiceClose => ",\n  }}\n  ".to_string(),
+            WithSpan(BodyLexeme::ChoiceBegin, _, _) => "\n  {{\n    ".to_string(),
+            WithSpan(BodyLexeme::ChoiceDelim, _, _) => ",\n    ".to_string(),
+            WithSpan(BodyLexeme::ChoiceClose, _, _) => ",\n  }}\n  ".to_string(),
         })
         .collect::<Vec<_>>()
         .join("");

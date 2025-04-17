@@ -2,11 +2,11 @@ use std::cmp;
 use std::mem;
 use std::ops::Range;
 
-use crate::constants::{KEYCODES, MODIFIERS};
+use crate::constants::KEYCODES;
 use crate::define_syntax;
 use crate::lexer::{BodyLexeme, HeadLexeme, Lexeme, LexemeOwner};
 use crate::reporter::MarkupError;
-use crate::structs::{Chord, Cursor, Shortcut};
+use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
 
 //run: cargo test -- --nocapture
 
@@ -109,10 +109,11 @@ define_syntax! {
         (lexeme: Either)
     | -> (),
     Loop {
-        Either::H(HeadLexeme::ChordDelim) => metadata.partition_width += 1;
-        Either::B(BodyLexeme::Section(_)) => metadata.partition_width += 1;
+        Either::H(WithSpan(HeadLexeme::ChordDelim, _, _)) => metadata.partition_width += 1;
+        Either::B(WithSpan(BodyLexeme::Section, _, _)) => metadata.partition_width += 1;
 
-        Either::H(HeadLexeme::ChoiceBegin) | Either::B(BodyLexeme::ChoiceBegin) => {
+        Either::H(WithSpan(HeadLexeme::ChoiceBegin, _, _))
+        | Either::B(WithSpan(BodyLexeme::ChoiceBegin, _, _)) => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(1, index);
                 // Skip HeadLexeme::ChoiceBegin
@@ -124,10 +125,13 @@ define_syntax! {
             metadata.partition_width = 0;
             metadata.partition_count += 1;
         };
-        Either::H(HeadLexeme::ChoiceDelim) | Either::B(BodyLexeme::ChoiceDelim) => {
+
+        Either::H(WithSpan(HeadLexeme::ChoiceDelim, _, _))
+        | Either::B(WithSpan(BodyLexeme::ChoiceDelim, _, _)) =>
             metadata.choice_count += 1;
-        };
-        Either::H(HeadLexeme::ChoiceClose) | Either::B(BodyLexeme::ChoiceClose)  => {
+
+        Either::H(WithSpan(HeadLexeme::ChoiceClose, _, _))
+        | Either::B(WithSpan(BodyLexeme::ChoiceClose, _, _))  => {
             if let Some(generator) = is_push {
                 generator.push_digit_weight(metadata.choice_count + 1, index);
                 // Skip HeadLexeme::ChoiceClose
@@ -140,6 +144,7 @@ define_syntax! {
         };
         _ => {};
     }
+
     End {
         _ => {
             metadata.space.calc_space(1, metadata.partition_width + 1);
@@ -177,19 +182,19 @@ impl<'filestr> HotkeyOwner<'filestr> {
             .zip(head_arrangement.0.iter())
             .map(|(section, choice)| {
                 section
-                    .split(|l| matches!(l, HeadLexeme::ChoiceDelim))
+                    .split(|l| matches!(l, WithSpan(HeadLexeme::ChoiceDelim, _, _)))
                     .nth(*choice)
                     .expect("Unreachable: Head choice index exceeded the current section")
             })
             .try_for_each(|key_sequence| {
                 key_sequence.iter().try_for_each(|key| match key {
-                    HeadLexeme::ChordDelim => {
+                    WithSpan(HeadLexeme::ChordDelim, _, _) => {
                         self.chords.push(mem::replace(&mut chord, Chord::new()));
                         Ok(())
                     }
-                    HeadLexeme::Mod(_) => chord.add(key),
-                    HeadLexeme::Key(_) => chord.add(key),
-                    HeadLexeme::Blank => Ok(()),
+                    WithSpan(HeadLexeme::Mod(_), _, _) => chord.add(key),
+                    WithSpan(HeadLexeme::Key(_), _, _) => chord.add(key),
+                    WithSpan(HeadLexeme::Blank, _, _) => Ok(()),
                     _ => unreachable!("Parser for head failed to catch {:?}", key),
                 })
             })?;
@@ -202,13 +207,13 @@ impl<'filestr> HotkeyOwner<'filestr> {
             .zip(body_arrangement.0.iter())
             .map(|(multiple_choice, choice)| {
                 multiple_choice
-                    .split(|l| matches!(l, BodyLexeme::ChoiceDelim))
+                    .split(|l| matches!(l, WithSpan(BodyLexeme::ChoiceDelim, _, _)))
                     .nth(*choice)
                     .expect("Unreachable: Head choice index exceeded the current section")
             })
             .for_each(|str_sections| {
                 str_sections.iter().for_each(|lexeme| match lexeme {
-                    BodyLexeme::Section(substr) => self.scripts.push(substr),
+                    WithSpan(BodyLexeme::Section, _, _) => self.scripts.push(lexeme.as_str()),
                     _ => unreachable!("Error on {:?}. Should be processed", lexeme),
                 });
                 //println!("{:?}", str_sections)
@@ -227,8 +232,8 @@ impl<'filestr> HotkeyOwner<'filestr> {
  * Helpers
  ****************************************************************************/
 enum Either<'a, 'filestr> {
-    H(&'a HeadLexeme),
-    B(&'a BodyLexeme<'filestr>),
+    H(&'a WithSpan<'filestr, HeadLexeme>),
+    B(&'a WithSpan<'filestr, BodyLexeme>),
 }
 
 #[derive(Debug)]
@@ -279,7 +284,7 @@ fn parse_lexeme(
         &mut head_data,
         lexeme.head.len(),
         head_generator,
-        Either::H(&HeadLexeme::Blank),
+        Either::H(&WithSpan(HeadLexeme::Blank, "", 0..0)),
     )?;
 
     let mut body_data = Metadata::new();
@@ -303,7 +308,7 @@ fn parse_lexeme(
         &mut body_data,
         lexeme.body.len(),
         body_generator,
-        Either::B(&BodyLexeme::Section("")),
+        Either::B(&WithSpan(BodyLexeme::Section, "", 0..0)),
     )?;
     //println!("head done {:?}", head_data.space);
     //println!("body done {:?}", body_data.space);
@@ -311,27 +316,28 @@ fn parse_lexeme(
 }
 
 impl Chord {
-    fn add(&mut self, lexeme: &HeadLexeme) -> Result<(), MarkupError> {
+    fn add(&mut self, lexeme: &WithSpan<HeadLexeme>) -> Result<(), MarkupError> {
         match lexeme {
-            HeadLexeme::Key(k) => {
+            WithSpan(HeadLexeme::Key(k), _, _) => {
                 if self.key >= KEYCODES.len() {
                     self.key = *k;
+                    Ok(())
                 } else {
-                    panic!("Key already set: {}", KEYCODES[*k]);
+                    Err(lexeme.to_error("Only specify one key per chord"))
                 }
             }
-            HeadLexeme::Mod(m) => {
+            WithSpan(HeadLexeme::Mod(m), _, _) => {
                 let flag = 1 << *m;
                 if self.modifiers & flag == 0 {
                     self.modifiers |= flag;
+                    Ok(())
                 } else {
-                    panic!("Duplicate modifier: {}", MODIFIERS[*m]);
+                    Err(lexeme.to_error("Duplicate modifier"))
                 }
             }
             // This is actually
             _ => unreachable!("Only for HeadLexeme::Key() and HeadLexeme::Mod()"),
         }
-        Ok(())
     }
 }
 

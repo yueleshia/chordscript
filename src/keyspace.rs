@@ -88,7 +88,6 @@ pub fn process<'parsemes, 'filestr>(
         all_actions,
     };
 
-    //debug_print_keyspace_owner(&owner);
     Ok(owner)
 }
 
@@ -164,7 +163,7 @@ fn partition_to_string(partition: &[Shortcut]) -> String {
     )
 }
 
-fn debug_print_keyspace_owner(
+pub fn debug_print_keyspace_owner(
     KeyspaceOwner {
         keyspaces,
         all_actions,

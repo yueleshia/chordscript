@@ -3,6 +3,22 @@
 use crate::constants::{KEYCODES, MODIFIERS};
 use std::fmt;
 use std::ops::Range;
+use crate::reporter::MarkupError;
+
+
+#[derive(Debug)]
+pub struct WithSpan<'filestr, T>(pub T, pub &'filestr str, pub Range<usize>);
+
+impl<'filestr, T> WithSpan<'filestr, T> {
+    pub fn to_error(&self, message: &str) -> MarkupError {
+        MarkupError::new(&self.1, self.as_str(), message.to_string())
+    }
+
+    pub fn as_str(&self) -> &'filestr str {
+        &self.1[self.2.start..self.2.end]
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Cursor(pub usize);
