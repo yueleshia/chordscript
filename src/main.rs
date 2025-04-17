@@ -27,10 +27,22 @@ fn interpret() {
 |super {{c, t, g, k}} ; super {{b,s}}|
   $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
 {{{| cat -}}}
-#| | echo asdf  # @TODO this should not be a lexer error
+#|| echo asdf
 #|super;| echo yo
 #|| echo yo
-#|super shift t|echo {{3349\, 109324}}
+#|super shift q; t|echo {{3349\, 109324}}
+|super shift q|"#;
+
+    let _file = r#"
+    #
+#hello
+|super {{, alt, ctrl, ctrl alt}} Return|
+  {{$TERMINAL, alacritty, \
+  st, sakura}} -e tmux.sh open
+|super {{c, t, g, k}} ; super {{b,s}}|
+  $TERMINAL -e {{curl,browser.sh}}  '{{terminal,gui}}' '{{bookmarks,search}}'
+{{{| cat -}}}
+|super shift q;t|
 |super shift q|"#;
     //println!("{}", _file);
 
@@ -40,8 +52,11 @@ fn interpret() {
         //_lexemes.to_iter().for_each(debug_print_lexeme);
 
         let parsemes = parser::process(&_lexemes)?;
-        //let mut _hotkeys = parsemes.make_owned_sorted_view();
-        //_hotkeys.iter().for_each(|shortcut| println!("{}", shortcut));
+        let mut _hotkeys = parsemes.make_owned_sorted_view();
+        //use structs::Print;
+        //_hotkeys
+        //    .iter()
+        //    .for_each(|shortcut| println!("{}", shortcut.to_string_custom()));
         let _keyspaces = keyspace::process(&parsemes);
         keyspace::debug_print_keyspace_owner(&_keyspaces);
         Ok(())

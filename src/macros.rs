@@ -1,6 +1,46 @@
 //run: cargo test -- --nocapture
 // Here we use // std::mem::transmutate;
 
+// This macro is for ergonomics, capacity and str can be specified on one line
+// This then calculates total capacity, allocates, then pushes
+#[macro_export]
+macro_rules! precalculate_capacity_and_build {
+    ($this:ident, $buffer:ident {
+        $( $init:stmt; )*
+    } {
+        $( $size:expr => $push:expr; )*
+    }) => {
+        fn string_len(&$this) -> usize {
+            $( $init )*
+            let capacity = 0 $( + $size )*;
+            capacity
+        }
+
+        fn push_string_into(&$this, $buffer: &mut String) {
+            debug_assert!({ $this.to_string_custom(); true });
+            $( $init )*
+            $( $push; )*
+        }
+
+        //#[cfg(Debug)]
+        fn to_string_custom(&$this) -> String {
+            $( $init )*
+            let capacity = $this.string_len();
+            let mut owner = String::with_capacity(capacity);
+            let $buffer = &mut owner;
+            $( $push; )*
+            debug_assert_eq!(capacity, $buffer.len(),
+                "Pre-calculated capacity is incorrect. Off by {}",
+                $buffer.len() - capacity
+            );
+            owner
+        }
+
+    };
+}
+
+
+
 #[macro_export]
 macro_rules! map {
     // We have to unroll the loop because we hit the stack limit too quickly

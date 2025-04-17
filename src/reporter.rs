@@ -19,8 +19,9 @@
 // unnecessary, I wanted to do it manually for educational purposes.
 //run: cargo test -- --nocapture
 
+use crate::precalculate_capacity_and_build;
+use crate::structs::{Print, WithSpan};
 use std::{error, fmt, io, mem};
-use crate::structs::WithSpan;
 use unicode_width::UnicodeWidthStr;
 //use unicode_segmentation::UnicodeSegmentation;
 
@@ -28,7 +29,7 @@ use unicode_width::UnicodeWidthStr;
 // 0.302 is an overestimate of log(10)/log(2) to err on side of bigger
 const USIZE_BASE_10_MAX_DIGITS: usize = mem::size_of::<usize>() * 8 * 302 / 1000 + 1;
 const DISPLAY_LIMIT: usize = 20;
-const ELLIPSIS: &str =  " ...";
+const ELLIPSIS: &str = " ...";
 
 #[test]
 fn limit_is_big_enough() {
@@ -50,22 +51,6 @@ impl fmt::Display for CliError {
     }
 }
 impl error::Error for CliError {}
-
-// This macro is for ergonomics, capacity and str can be specified on one line
-// This then calculates total capacity, allocates, then pushes
-macro_rules! precalculate_capacity_and_build {
-    ($buffer:ident, { $($size:expr => $push:expr;)* }) => {
-        let capacity = 0 $(+ $size)*;
-        $buffer = String::with_capacity(capacity);
-
-        $($push;)*
-        debug_assert!(
-            capacity == $buffer.len(),
-            "Pre-calculated capacity is incorrect. Off by {}",
-            $buffer.len() - capacity
-        );
-    };
-}
 
 #[derive(Debug)]
 pub struct MarkupError {
@@ -93,7 +78,11 @@ impl MarkupError {
         }
     }
 
-    pub fn from_span_over<T>(from: &WithSpan<T>, till_inclusive: &WithSpan<T>, message: String) -> Self {
+    pub fn from_span_over<T>(
+        from: &WithSpan<T>,
+        till_inclusive: &WithSpan<T>,
+        message: String,
+    ) -> Self {
         Self {
             source: from.context.to_string(),
             range: WithSpan::span_to_as_range(from, till_inclusive),
@@ -160,6 +149,12 @@ fn line_offset_to_width(context: &str, line: &str, index: usize) -> usize {
 // TODO: Delegating print source and rows to error enum `CliError`
 impl fmt::Display for MarkupError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.to_string_custom().as_str())
+    }
+}
+
+impl Print for MarkupError {
+    precalculate_capacity_and_build!(self, buffer {
         let (begin, close) = self.range;
         let (r0, _, r1, _) = convert_to_row_indices(self.source.as_str(), self.range);
         let row_digit_len = count_digits(r1 + 1);
@@ -179,97 +174,91 @@ impl fmt::Display for MarkupError {
 
         let after_marker = line_offset_to_width(&self.source, close_line, close);
         //println!("{:?} {} {}", before_spaces, before_marker, after_marker_width);
+    } {
+        // Print the filename, row, and col span
+        //row_digit_len => pad(buffer, row_digit_len, "");
+        //4 => buffer.push_str("--> ");
+        //8 => buffer.push_str("<source>");
+        //1 => buffer.push(':');
+        //// Rows-col range
+        //r0 => push_num(buffer, count_digits(r0), r0);
+        //1 => buffer.push(':');
+        //c0_digit_len => push_num(buffer, c0_digit_len, c0);
+        //row_digit_len => push_num(buffer, row_digit_len, r0);
+        //1 => buffer.push(':');
+        //c1_digit_len => push_num(buffer, c1_digit_len, c1);
+        //1 => buffer.push('\n');
 
-        let mut buffer: String;
-        precalculate_capacity_and_build!(buffer, {
-            // Print the filename, row, and col span
-            //row_digit_len => pad(&mut buffer, row_digit_len, "");
-            //4 => buffer.push_str("--> ");
-            //8 => buffer.push_str("<source>");
-            //1 => buffer.push(':');
-            //// Rows-col range
-            //r0 => push_num(&mut buffer, count_digits(r0), r0);
-            //1 => buffer.push(':');
-            //c0_digit_len => push_num(&mut buffer, c0_digit_len, c0);
-            //row_digit_len => push_num(&mut buffer, row_digit_len, r0);
-            //1 => buffer.push(':');
-            //c1_digit_len => push_num(&mut buffer, c1_digit_len, c1);
-            //1 => buffer.push('\n');
+        // Beginning padding for source code
+        row_digit_len => pad(buffer, row_digit_len, "");
+        3 => buffer.push_str(" |\n");
 
-            // Beginning padding for source code
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            3 => buffer.push_str(" |\n");
+        // Error marker for begin line
+        if is_single_line { 0 } else {
+            row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
+        } => if !is_single_line {
+            pad(buffer, row_digit_len, "");
+            buffer.push_str(" | ");
+            debug_assert!(" ".width_cjk() == 1);
+            debug_assert!("v".width_cjk() == 1);
+            for _ in 0..first_spaces { buffer.push(' '); }
+            for _ in 0..first_marker { buffer.push('v'); }
+            buffer.push('\n');
+        };
 
-            // Error marker for begin line
-            if is_single_line { 0 } else {
-                row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
-            } => if !is_single_line {
-                pad(&mut buffer, row_digit_len, "");
+        // Print source with row numbers
+        {
+            self.source
+                .lines()
+                .skip(r0)
+                .take(row_count)
+                .map(|line| row_digit_len + 3 + line.len() + 1)
+                .sum::<usize>()
+        } => {
+            let mut row = r0 + 1;
+            for line in self.source.lines().skip(r0).take(row_count) {
+                push_num(buffer, row_digit_len, row);
                 buffer.push_str(" | ");
-                debug_assert!(" ".width_cjk() == 1);
-                debug_assert!("v".width_cjk() == 1);
-                for _ in 0..first_spaces { buffer.push(' '); }
-                for _ in 0..first_marker { buffer.push('v'); }
+                buffer.push_str(line);
                 buffer.push('\n');
-            };
+                row += 1;
+            }
+        };
 
-            // Print source with row numbers
-            {
-                self.source
-                    .lines()
-                    .skip(r0)
-                    .take(row_count)
-                    .map(|line| row_digit_len + 3 + line.len() + 1)
-                    .sum::<usize>()
-            } => {
-                let mut row = r0 + 1;
-                for line in self.source.lines().skip(r0).take(row_count) {
-                    push_num(&mut buffer, row_digit_len, row);
-                    buffer.push_str(" | ");
-                    buffer.push_str(line);
-                    buffer.push('\n');
-                    row += 1;
-                }
-            };
+        // Error marker for close line
+        if is_single_line {
+            row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
+        } else {
+            row_digit_len + " | ".len() + after_marker + '\n'.len_utf8()
+        } => if is_single_line {
+            pad(buffer, row_digit_len, "");
+            buffer.push_str(" | ");
+            debug_assert!(" ".width_cjk() == 1);
+            debug_assert!("^".width_cjk() == 1);
+            for _ in 0..first_spaces { buffer.push(' '); }
+            for _ in 0..first_marker { buffer.push('^'); }
+            buffer.push('\n');
+        } else {
+            pad(buffer, row_digit_len, "");
+            buffer.push_str(" | ");
+            for _ in 0..after_marker { buffer.push('^'); }
+            buffer.push('\n');
+        };
 
-            // Error marker for close line
-            if is_single_line {
-                row_digit_len + " | ".len() + first_spaces + first_marker + '\n'.len_utf8()
-            } else {
-                row_digit_len + " | ".len() + after_marker + '\n'.len_utf8()
-            } => if is_single_line {
-                pad(&mut buffer, row_digit_len, "");
-                buffer.push_str(" | ");
-                debug_assert!(" ".width_cjk() == 1);
-                debug_assert!("^".width_cjk() == 1);
-                for _ in 0..first_spaces { buffer.push(' '); }
-                for _ in 0..first_marker { buffer.push('^'); }
-                buffer.push('\n');
-            } else {
-                pad(&mut buffer, row_digit_len, "");
-                buffer.push_str(" | ");
-                for _ in 0..after_marker { buffer.push('^'); }
-                buffer.push('\n');
-            };
+        // Closing padding for source code
+        row_digit_len => pad(buffer, row_digit_len, "");
+        3 => buffer.push_str(" |\n");
 
-            // Closing padding for source code
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            3 => buffer.push_str(" |\n");
-
-            // Print error message
-            row_digit_len => pad(&mut buffer, row_digit_len, "");
-            3 => buffer.push_str(" = ");
-            self.message.len() => buffer.push_str(self.message.as_str());
-        });
-
-        f.write_str(buffer.as_str())
-    }
+        // Print error message
+        row_digit_len => pad(buffer, row_digit_len, "");
+        3 => buffer.push_str(" = ");
+        self.message.len() => buffer.push_str(self.message.as_str());
+    });
 }
 
-/*******************************************************************************
+/****************************************************************************
  * For printing
- **/
-
+ ****************************************************************************/
 fn index_of_substr<'a>(source: &'a str, substr: &'a str) -> usize {
     (substr.as_ptr() as usize) - (source.as_ptr() as usize)
 }
@@ -326,6 +315,8 @@ fn push_num(buffer: &mut String, digit_len: usize, mut num: usize) {
     pad(buffer, digit_len, numstr);
 }
 
+// Count the number of digits in the base-10 representation without allocations
+// i.e. Naive alternative is `num.to_string().len()`
 fn count_digits(mut num: usize) -> usize {
     let mut size = 0;
     let base = 10;

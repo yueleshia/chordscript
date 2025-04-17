@@ -6,7 +6,7 @@ use std::mem;
 use std::ops::Range;
 
 use crate::parser::ShortcutOwner;
-use crate::structs::{Chord, Cursor, Shortcut, WithSpan};
+use crate::structs::{Chord, Cursor, Print, Shortcut, WithSpan};
 
 /****************************************************************************
  * Token definitions
@@ -165,17 +165,6 @@ fn partition_by_col_into<'a, 'owner, 'filestr>(
 /****************************************************************************
  * Printing
  ****************************************************************************/
-fn partition_to_string(partition: &[Shortcut]) -> String {
-    format!(
-        "{}\n==========",
-        partition
-            .iter()
-            .map(|shortcut| format!("{}", shortcut))
-            .collect::<Vec<_>>()
-            .join("\n")
-    )
-}
-
 pub fn debug_print_keyspace_owner(
     KeyspaceOwner {
         keyspaces,
@@ -190,14 +179,11 @@ pub fn debug_print_keyspace_owner(
             .map(|action| match action {
                 Action::SetState(name) => format!(
                     "set state {}",
-                    name.iter()
-                        .map(|chord| format!("{}", chord.data))
-                        .collect::<Vec<_>>()
-                        .join(" ; ")
+                    name.to_string_custom(),
                 ),
                 Action::Command(chord, command) => format!(
                     "{} -> {:?}",
-                    chord.data,
+                    chord.to_string_custom(),
                     command
                         .iter()
                         .map(|with_span| with_span.as_str())
@@ -211,11 +197,7 @@ pub fn debug_print_keyspace_owner(
         println!(
             "state {} {:?} {{\n  {}\n}}\n",
             len,
-            title
-                .iter()
-                .map(|chord| format!("{}", chord.data))
-                .collect::<Vec<_>>()
-                .join(" ; "),
+            title.to_string_custom(),
             action_string,
         );
     }

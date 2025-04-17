@@ -1,9 +1,16 @@
 //run: cargo test -- --nocapture
 
 use crate::constants::{KEYCODES, MODIFIERS};
+use crate::precalculate_capacity_and_build;
 use crate::reporter::MarkupError;
-use std::fmt;
 use std::ops::Range;
+
+pub trait Print {
+    fn string_len(&self) -> usize;
+    fn push_string_into(&self, buffer: &mut String);
+    // @TODO cfg(debug) only
+    fn to_string_custom(&self) -> String;
+}
 
 #[derive(Clone, Debug)]
 pub struct WithSpan<'filestr, T> {
@@ -38,6 +45,7 @@ impl<'filestr, T> WithSpan<'filestr, T> {
 
 #[derive(Debug)]
 pub struct Cursor(pub usize);
+
 impl Cursor {
     pub fn move_to(&mut self, index: usize) -> Range<usize> {
         debug_assert!(index >= self.0);
@@ -52,52 +60,28 @@ impl Cursor {
 }
 
 pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
-pub fn debug_hotkey_to_string(hotkey: Hotkey) -> String {
-    hotkey
-        .iter()
-        .map(|chord_span| chord_span.data.to_string())
-        .collect::<Vec<_>>()
-        .join(" ; ")
-}
 
-#[derive(Debug)]
-pub struct Shortcut<'owner, 'filestr> {
-    pub hotkey: Hotkey<'owner, 'filestr>,
-    pub command: &'owner [WithSpan<'filestr, ()>],
-}
-impl<'owner, 'filestr> fmt::Display for Shortcut<'owner, 'filestr> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("|")?;
-        f.write_str(
-            self.hotkey
-                .iter()
-                .map(|x| x.data.to_string())
-                .collect::<Vec<_>>()
-                .join(" ; ")
-                .as_str(),
-        )?;
-        f.write_str("|")?;
-        f.write_str(self.command.iter().map(|span| span.as_str()).collect::<Vec<_>>().join("").trim())
-    }
-}
+impl<'owner, 'filestr> Print for Hotkey<'owner, 'filestr> {
+    precalculate_capacity_and_build!(self, buffer {
+        let mut iter = self.iter();
+        let delim = " ; ";
+    } {
+        if let Some(first) = iter.next() {
+            first.string_len() + iter
+                .map(|chord_span| delim.len() + chord_span.string_len())
+                .sum::<usize>()
+        } else {
+            0
+        } => if let Some(first) = iter.next() {
+            first.push_string_into(buffer);
+            iter.for_each(|chord_span| {
+                buffer.push_str(delim);
+                chord_span.push_string_into(buffer);
 
-
-impl<'owner, 'filestr> std::cmp::Ord for WithSpan<'filestr, Chord> {
-     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.data.cmp(&other.data)
-    }
+            });
+        };
+    });
 }
-impl<'owner, 'filestr> std::cmp::PartialOrd for WithSpan<'filestr, Chord> {
-     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.data.cmp(&other.data))
-    }
-}
-impl<'owner, 'filestr> std::cmp::PartialEq for WithSpan<'filestr, Chord> {
-     fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
-    }
-}
-impl<'owner, 'filestr> std::cmp::Eq for WithSpan<'filestr, Chord> {}
 
 type ChordModifiers = u8;
 
@@ -107,6 +91,41 @@ pub struct Chord {
     pub modifiers: ChordModifiers,
 }
 
+impl<'owner, 'filestr> Print for WithSpan<'filestr, Chord> {
+    precalculate_capacity_and_build!(self, buffer {
+        let Chord { key, modifiers } = self.data;
+        let mut mod_iter = MODIFIERS.iter().enumerate()
+            .filter(|(i, _)| modifiers & (1 << i) != 0);
+        let space = ' ';
+        debug_assert!(space.len_utf8() == 1);
+        let first = mod_iter.next();
+    } {
+        // Process the first element separately to simulate a join()
+        first.map(|(_, mod_str)| mod_str.len()).unwrap_or(0) =>
+            if let Some((_, mod_str)) = first {
+                buffer.push_str(mod_str);
+            };
+        mod_iter.map(|(_, mod_str)| mod_str.len() + 1).sum::<usize>() =>
+            mod_iter.for_each(|(_, mod_str)| {
+                buffer.push(space);
+                buffer.push_str(mod_str);
+            });
+
+
+        // Then the key itself
+        if key < KEYCODES.len() {
+            KEYCODES[key].len() + if first.is_some() { 1 } else { 0 }
+        } else {
+            0
+        } => if key < KEYCODES.len() {
+             if first.is_some() {
+                 buffer.push(space);
+             }
+             buffer.push_str(KEYCODES[key]);
+         };
+    });
+}
+
 impl Chord {
     pub fn new() -> Self {
         Self {
@@ -114,28 +133,24 @@ impl Chord {
             modifiers: 0,
         }
     }
-
-    pub fn copy(&mut self, chord: &Self) {
-        self.key = chord.key;
-        self.modifiers = chord.modifiers;
-    }
 }
 
-impl fmt::Display for Chord {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (i, modifier) in MODIFIERS.iter().enumerate() {
-            let flag = 1 << i;
-            if self.modifiers & flag != 0 {
-                f.write_str(modifier)?;
-                f.write_str(" ")?;
-            }
-        }
-        if self.key < KEYCODES.len() {
-            f.write_str(KEYCODES[self.key])?;
-        }
-        Ok(())
+impl<'owner, 'filestr> std::cmp::Ord for WithSpan<'filestr, Chord> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.data.cmp(&other.data)
     }
 }
+impl<'owner, 'filestr> std::cmp::PartialOrd for WithSpan<'filestr, Chord> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.data.cmp(&other.data))
+    }
+}
+impl<'owner, 'filestr> std::cmp::PartialEq for WithSpan<'filestr, Chord> {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+impl<'owner, 'filestr> std::cmp::Eq for WithSpan<'filestr, Chord> {}
 
 #[test]
 fn chord_modifiers_big_enough() {
@@ -146,4 +161,27 @@ fn chord_modifiers_big_enough() {
         modifier_size >= MODIFIERS.len(),
         "'Modifiers' is not large enough to hold all the flags"
     );
+}
+
+#[derive(Debug)]
+pub struct Shortcut<'owner, 'filestr> {
+    pub hotkey: Hotkey<'owner, 'filestr>,
+    pub command: &'owner [WithSpan<'filestr, ()>],
+}
+
+impl<'owner, 'filestr> Print for Shortcut<'owner, 'filestr> {
+    precalculate_capacity_and_build!(self, buffer {} {
+        // First the modifiers
+        self.hotkey.string_len() + 2  => {
+            buffer.push('|');
+            self.hotkey.push_string_into(buffer);
+            buffer.push('|');
+        };
+        self.command.iter().map(|s| s.range.len()).sum::<usize>() => {
+            self.command.iter().for_each(|str_span| {
+                buffer.push_str(str_span.as_str());
+            });
+        };
+
+    });
 }
