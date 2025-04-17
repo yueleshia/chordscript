@@ -1,34 +1,23 @@
 //run: cargo test -- --nocapture
 
 use crate::constants::{KEYCODES, MODIFIERS};
-//use crate::reporter::MarkupError;
 use std::ops::Range;
+use std::fmt;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WithSpan<'filestr, T> {
     pub data: T,
     pub context: &'filestr str,
     pub source: &'filestr str,
 }
 
-impl<'filestr, T> WithSpan<'filestr, T> {
-    //pub fn to_error(&self, message: &str) -> MarkupError {
-    //    MarkupError::from_str(&self.context, self.as_str(), message.to_string())
-    //}
-
-    pub fn map_to<U>(&self, new_value: U) -> WithSpan<'filestr, U> {
-        WithSpan {
-            data: new_value,
-            context: self.context,
-            source: self.source,
-        }
+impl<'filestr, T: fmt::Debug> fmt::Debug for WithSpan<'filestr, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("WithSpan")
+            .field("data", &self.data)
+            .field("source", &self.source)
+            .finish()
     }
-
-    //pub fn span_to_as_range(&self, to: &Self) -> Range<usize> {
-    //    // This an internal structure so debug_assert is fine
-    //    debug_assert_eq!(self.context, to.context);
-    //    self.range.start..to.range.end
-    //}
 }
 
 #[derive(Debug)]
@@ -44,20 +33,26 @@ impl Cursor {
     pub fn span_to(&self, index: usize) -> Range<usize> {
         self.0..index
     }
-    pub fn width(&self, index: usize) -> usize {
-        debug_assert!(index >= self.0);
-        index - self.0
-    }
 }
 
 type ChordModifiers = u8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Chord<'filestr> {
     pub key: usize,
     pub modifiers: ChordModifiers,
     pub sources: [&'filestr str; MODIFIERS.len() + 1],
     pub context: &'filestr str,
+}
+
+impl<'filestr> fmt::Debug for Chord<'filestr> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Chord")
+            .field("key", &self.key)
+            .field("modifiers", &self.modifiers)
+            .field("sources", &self.sources)
+            .finish()
+    }
 }
 
 impl<'filestr> Chord<'filestr> {
@@ -71,12 +66,12 @@ impl<'filestr> Chord<'filestr> {
     }
 }
 
-#[cfg(debug_assertions)]
-impl<'filestr> std::fmt::Display for Chord<'filestr> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{} {}: {:?}", self.modifiers, self.key, self.sources)
-    }
-}
+//#[cfg(debug_assertions)]
+//impl<'filestr> std::fmt::Display for Chord<'filestr> {
+//    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//        write!(f, "{} {}: {:?}", self.modifiers, self.key, self.sources)
+//    }
+//}
 
 impl<'filestr> std::cmp::Ord for Chord<'filestr> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {

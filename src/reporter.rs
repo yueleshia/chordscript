@@ -66,13 +66,6 @@ fn index_of_substr(context: &str, substr: &str) -> usize {
     (substr.as_ptr() as usize) - (context.as_ptr() as usize)
 }
 impl MarkupError {
-    pub fn from_range(source: &str, range: Range<usize>, message: String) -> Self {
-        Self {
-            source: source.to_string(),
-            range,
-            message,
-        }
-    }
     pub fn from_str<'a>(context: &'a str, span: &'a str, message: String) -> Self {
         let index = index_of_substr(context, span);
         Self {
