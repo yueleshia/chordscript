@@ -15,12 +15,12 @@ use super::{DeserialiseChord, DeserialiseHotkey, PreallocPush};
 //    key_to_str: &'static [&'static str],
 //}
 
-pub const SHELL_CONSTANTS: DeserialiseChord = DeserialiseChord {
+pub(crate) const SHELL_CONSTANTS: DeserialiseChord = DeserialiseChord {
     delim: " ",
     mod_to_str: &MODIFIERS,
     key_to_str: &KEYCODES,
 };
-pub const SHELL_CHORD_DELIM: &str = " ; ";
+pub(crate) const SHELL_CHORD_DELIM: &str = " ; ";
 sidebyside_len_and_push!(len<'b, 'filestr>, push_into<'b, 'filestr>
 (shortcut: Shortcut<'b, 'filestr>, extra: DeserialiseChord, buffer: 'filestr) {
     let wrap_hotkey = DeserialiseHotkey(SHELL_CHORD_DELIM, shortcut.hotkey);

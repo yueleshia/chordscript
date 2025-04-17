@@ -56,9 +56,8 @@ pub trait PreallocPush<'a, T> {
     fn push_into(&self, extra: T, buffer: &mut Vec<&'a str>);
 }
 
-// @TODO: Is it a bug that this is pub? For `i3shell.rs` to be able to use {shellscript::SHELL_CONSTANTS}
 #[derive(Clone, Copy)]
-pub struct DeserialiseChord {
+pub(crate) struct DeserialiseChord {
     delim: &'static str,
     mod_to_str: &'static [&'static str],
     key_to_str: &'static [&'static str],
