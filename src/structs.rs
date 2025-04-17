@@ -1,38 +1,34 @@
 //run: cargo test -- --nocapture
 
-use crate::constants::KEYCODES;
-use crate::reporter::MarkupError;
+use crate::constants::{KEYCODES, MODIFIERS};
+//use crate::reporter::MarkupError;
 use std::ops::Range;
 
 #[derive(Clone, Debug)]
 pub struct WithSpan<'filestr, T> {
     pub data: T,
     pub context: &'filestr str,
-    pub range: Range<usize>,
+    pub source: &'filestr str,
 }
 
 impl<'filestr, T> WithSpan<'filestr, T> {
-    pub fn to_error(&self, message: &str) -> MarkupError {
-        MarkupError::from_str(&self.context, self.as_str(), message.to_string())
-    }
-
-    pub fn as_str(&self) -> &'filestr str {
-        &self.context[self.range.start..self.range.end]
-    }
+    //pub fn to_error(&self, message: &str) -> MarkupError {
+    //    MarkupError::from_str(&self.context, self.as_str(), message.to_string())
+    //}
 
     pub fn map_to<U>(&self, new_value: U) -> WithSpan<'filestr, U> {
         WithSpan {
             data: new_value,
             context: self.context,
-            range: self.range.clone(),
+            source: self.source,
         }
     }
 
-    pub fn span_to_as_range(&self, to: &Self) -> Range<usize> {
-        // This an internal structure so debug_assert is fine
-        debug_assert_eq!(self.context, to.context);
-        self.range.start..to.range.end
-    }
+    //pub fn span_to_as_range(&self, to: &Self) -> Range<usize> {
+    //    // This an internal structure so debug_assert is fine
+    //    debug_assert_eq!(self.context, to.context);
+    //    self.range.start..to.range.end
+    //}
 }
 
 #[derive(Debug)]
@@ -56,37 +52,44 @@ impl Cursor {
 
 type ChordModifiers = u8;
 
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Chord {
+#[derive(Clone, Debug)]
+pub struct Chord<'filestr> {
     pub key: usize,
     pub modifiers: ChordModifiers,
+    pub sources: [&'filestr str; MODIFIERS.len() + 1],
+    pub context: &'filestr str,
 }
 
-impl Chord {
-    pub fn new() -> Self {
+impl<'filestr> Chord<'filestr> {
+    pub fn new(context: &'filestr str) -> Self {
         Self {
             key: KEYCODES.len(), // Invalid index, i.e.  means None
             modifiers: 0,
+            sources: [&context[0..0]; MODIFIERS.len() + 1],
+            context,
         }
     }
 }
 
-impl<'owner, 'filestr> std::cmp::Ord for WithSpan<'filestr, Chord> {
+impl<'filestr> std::cmp::Ord for Chord<'filestr> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.data.cmp(&other.data)
+        match self.key.cmp(&other.key) {
+            std::cmp::Ordering::Equal => self.modifiers.cmp(&other.modifiers),
+            a => a,
+        }
     }
 }
-impl<'owner, 'filestr> std::cmp::PartialOrd for WithSpan<'filestr, Chord> {
+impl<'filestr> std::cmp::PartialOrd for Chord<'filestr> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.data.cmp(&other.data))
+        Some(self.cmp(other))
     }
 }
-impl<'owner, 'filestr> std::cmp::PartialEq for WithSpan<'filestr, Chord> {
+impl<'filestr> std::cmp::PartialEq for Chord<'filestr> {
     fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
+        self.key == other.key && self.modifiers == other.modifiers
     }
 }
-impl<'owner, 'filestr> std::cmp::Eq for WithSpan<'filestr, Chord> {}
+impl<'filestr> std::cmp::Eq for Chord<'filestr> {}
 
 #[test]
 fn chord_modifiers_big_enough() {
@@ -100,7 +103,7 @@ fn chord_modifiers_big_enough() {
     );
 }
 
-pub type Hotkey<'owner, 'filestr> = &'owner [WithSpan<'filestr, Chord>];
+pub type Hotkey<'owner, 'filestr> = &'owner [Chord<'filestr>];
 
 #[derive(Clone, Debug)]
 pub struct Shortcut<'owner, 'filestr> {

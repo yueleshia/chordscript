@@ -12,9 +12,9 @@ mod errors;
 //mod keyspace;
 mod lexer;
 mod macros;
-//mod parser;
+mod parser;
 //mod reporter;
-//mod structs;
+mod structs;
 
 //use deserialise::Print;
 use std::fs;
@@ -68,8 +68,8 @@ macro_rules! subcommands {
             .map_err(Errors::Cli)?;
         let file = fs::read_to_string($pargs.opt_str("c").unwrap()).map_err(Errors::Io)?;
         let _lex_data = lexer::lex(file.as_str()).map_err(Errors::Debug)?;
-        //let _parser = parser::parse(_lex_data);
         _lex_data.lexemes.iter().for_each(|lexeme| println!("- {:?}", lexeme));
+        let _parser = parser::parse(_lex_data);
         //let lexemes = lexer::process(file.as_str()).map_err(Errors::Parse)?;
         //let $shortcuts = parser::process(&lexemes).map_err(Errors::Parse)?;
     };
