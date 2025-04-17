@@ -4,6 +4,9 @@
 mod errors;
 mod lexer;
 mod messages;
+mod constants;
+
+const DEV_PRINT: bool = false;
 
 fn main() {
     println!("Hello, world!");
@@ -23,6 +26,13 @@ fn interpret() {
     //println!("{}", _file);
 
     let _error = errors::MarkupLineError::new("what a failure", _file, 3, 2, 5);
-    lexer::process(_file).unwrap();
+    let lexemes = lexer::process(_file).unwrap();
     //println!("{}", error);
+
+    for (i, x) in lexemes.heads.iter().enumerate() {
+        println!("{}: {:?}", i, x);
+    }
+    //println!("{:#?}", tokens.bodys);
+
+
 }
