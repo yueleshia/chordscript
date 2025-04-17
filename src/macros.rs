@@ -72,6 +72,48 @@ macro_rules! const_concat {
     };
 }
 
+#[macro_export]
+macro_rules! define_syntax {
+    ($func:ident
+        | $state_tracker:ident: $StateEnum:ident
+            ! $($arg:ident : $ArgType:ty),*
+            , ($( $to_match:ident : $ToMatchType:ty ),+)
+        | -> $Out:ty,
+        $($state_variant:ident {
+            $(
+                $( $pattern:pat )|+ $( if $guard:expr )? => $runner:expr;
+            )*
+        })*
+    ) => {
+        enum $StateEnum {
+            $($state_variant,)*
+        }
+
+        fn $func<'a>(
+            $state_tracker: &mut $StateEnum,
+            $( $arg : $ArgType, )*
+            $( $to_match : $ToMatchType, )*
+        ) -> Result<$Out, MarkupError> {
+            let tuple = $crate::define_syntax!(@as_tuple $( $to_match ),*);
+            match $state_tracker {
+                $($StateEnum::$state_variant => match tuple {
+                    $( $( $pattern )|+ $( if $guard )? => {
+                        $runner
+                    })*
+                },)*
+            }
+            Ok(())
+        }
+    };
+
+    (@as_tuple $arg:ident) => { $arg };
+    (@as_tuple $arg1:ident, $( $arg:ident ),+) => {
+        ( $arg1, $( $arg, )+ )
+    };
+}
+
+
+
 #[test]
 fn const_concat() {
     // Test loop unrolling is working

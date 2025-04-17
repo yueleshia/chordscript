@@ -8,6 +8,7 @@ mod errors;
 mod lexer;
 mod macros;
 mod reporter;
+mod structs;
 
 fn main() {
     println!("Hello, world!");
