@@ -530,11 +530,11 @@ impl<'a> Fsm<'a> {
 impl<'a> Fsm<'a> {
     // Outside of head/placeholder '{{' and '}}'
     fn emit_head(&self, frag: &'a str) -> StepOutput<'a> {
-        Ok((!frag.is_empty()).then(|| Lexeme::Key(frag)))
+        Ok((!frag.is_empty()).then_some(Lexeme::Key(frag)))
     }
     // Inside of '{{' and '}}'
     fn emit_h_choice(&self, frag: &'a str) -> StepOutput<'a> {
-        Ok((!frag.is_empty()).then(|| Lexeme::HChoice(self.member_num, frag)))
+        Ok((!frag.is_empty()).then_some(Lexeme::HChoice(self.member_num, frag)))
     }
 
     // Before closing '!', closing '|', and ';'

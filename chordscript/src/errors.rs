@@ -67,12 +67,10 @@ macro_rules! const_concat {
                 )*
                 substr
             };
-            unsafe { ::std::mem::transmute::<&[u8], &str>(&JOINED) }
+            unsafe { ::std::str::from_utf8_unchecked(&JOINED) }
         };
     };
 }
-
-
 
 pub mod lexer {
     pub const HEAD_INVALID_CLOSE: &str =
@@ -161,7 +159,6 @@ fn const_concat_real_example() {
     );
 }
 
-
 #[test]
 fn const_concat() {
     // Test loop unrolling is working
@@ -178,4 +175,3 @@ fn const_concat() {
     const_concat!(const ASDF = FIRST => " the lazy dog");
     assert_eq!("The quick brown fox jumps over the lazy dog", ASDF);
 }
-

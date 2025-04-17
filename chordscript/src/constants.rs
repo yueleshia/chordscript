@@ -40,9 +40,9 @@ macro_rules! const_join_str {
             let mut i = 0;
             let mut len = 0;
             loop {
-               // len += ALL_KEYS[i].len() + 1;
+                // len += ALL_KEYS[i].len() + 1;
                 let slice = $list[i].as_bytes();
-                copy_from_slice!(temp[{len}..] = slice);
+                copy_from_slice!(temp[{ len }..] = slice);
                 len += $list[i].len() + 1;
                 i += 1;
                 if i < $list.len() {
@@ -75,11 +75,10 @@ pub const WHITESPACE: [char; 25] = [
 const SEPARATOR_LEN: usize = WHITESPACE.len() + 1;
 pub const SEPARATOR: [char; SEPARATOR_LEN] = {
     let mut base = [' '; SEPARATOR_LEN];
-    copy_from_slice!(base[{0}..] = WHITESPACE);
+    copy_from_slice!(base[{ 0 }..] = WHITESPACE);
     base[25] = '+';
     base
 };
-
 
 // Following the naming conventions of xev for the keys
 array_index_by_enum! { MODIFIER_COUNT: usize
@@ -111,14 +110,12 @@ array_index_by_enum! { KEYCODE_COUNT: usize
 }
 const ALL_KEYS: [&str; MODIFIERS.len() + KEYCODES.len()] = {
     let mut base = [""; MODIFIERS.len() + KEYCODES.len()];
-    copy_from_slice!(base[{0}..] = MODIFIERS);
-    copy_from_slice!(base[{MODIFIERS.len()}..] = KEYCODES);
+    copy_from_slice!(base[{ 0 }..] = MODIFIERS);
+    copy_from_slice!(base[{ MODIFIERS.len() }..] = KEYCODES);
     base
 };
 // Join ALL_KEYS for printing an error message
 const_join_str!(pub const AVAILABLE_KEYS: &str = ALL_KEYS | join(JOIN_RAW JOIN_LEN));
-
-
 
 #[cfg(test)]
 pub const KEYSTR_UTF8_MAX_LEN: usize = {

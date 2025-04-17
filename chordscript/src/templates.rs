@@ -1,15 +1,14 @@
 //run: cargo test -- --nocapture
 
-use crate::constants::{KEYCODES, MODIFIERS};
-use crate::parser::shortcuts::ShortcutOwner;
-use crate::parser::{Chord, InnerChord};
 use std::io::{Result as IoResult, Write};
 
-use crate::{sidebyside_len_and_push, array_index_by_enum};
+use crate::constants::{KEYCODES, MODIFIERS};
+use crate::parser::{shortcuts::ShortcutOwner, Chord, InnerChord};
+use crate::{array_index_by_enum, sidebyside_len_and_push};
 
-mod shellscript;
-mod i3_shell;
 mod debug_shortcuts;
+mod i3_shell;
+mod shellscript;
 
 array_index_by_enum! { TEMPLATE_COUNT: usize
     pub enum Templates {
@@ -21,31 +20,6 @@ array_index_by_enum! { TEMPLATE_COUNT: usize
     => 2 pub const ID_TO_STR: [&str]
     => 3 pub const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
 }
-//array_index_by_enum! {
-//    pub enum Templates
-//    => pub const ID_TO_TEMPLATE: [Templates]
-//    => pub const ID_TO_STR: [&str]
-//    => const VTABLE: [&dyn for<'a, 'b> PreallocPush<'a, &'b ShortcutOwner<'a>>]
-//    = {
-//        ShellScript => "shell" => &shellscript::Wrapper(),
-//        I3Shell =>  "i3" => &i3_shell::Wrapper(),
-//        DebugShortcuts =>  "debug-shortcuts" => &debug_shortcuts::Wrapper(),
-//    };
-//}
-
-//#[test]
-//fn asdf() {
-//    use crate::parser;
-//    use std::io::stdout;
-//    let me = include_str!(concat!(env!("HOME"), "/.config/rc/wm-shortcuts"));
-//    //print("|{}|", me);
-//    let _lock = &mut stdout();
-//
-//    let ast = &parser::parse_to_shortcuts(me).unwrap();
-//    Templates::ShellScript
-//        .pipe(ast, _lock)
-//        .expect("unreachable");
-//}
 
 impl<'filestr, 'b> PreallocPush<'filestr, &'b ShortcutOwner<'filestr>> for Templates {
     fn len(&self, owner: &'b ShortcutOwner<'filestr>) -> usize {

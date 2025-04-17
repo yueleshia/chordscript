@@ -1,8 +1,4 @@
-// run: cargo test
 //run: cargo test -- --nocapture
-// run: cargo run -- --help
-// run: cargo run --release
-// run: cargo run -- i3-shell --config $XDG_CONFIG_HOME/rc/wm-shortcuts -s $HOME/interim/hk/script.sh
 
 //#![allow(dead_code)]
 

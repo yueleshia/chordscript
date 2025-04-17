@@ -57,7 +57,6 @@ macro_rules! precalculate_capacity_and_build {
     ($buffer:ident @push) => { 0 };
 }
 
-
 // A way specify length of what is pushed and do the pushing side-by-side
 #[macro_export]
 macro_rules! sidebyside_len_and_push {
@@ -109,8 +108,6 @@ macro_rules! sidebyside_len_and_push {
     ($buffer:ident @push) => { 0 };
 }
 
-
-
 // @TODO: Constants can probably use this
 #[macro_export]
 macro_rules! pick {
@@ -118,7 +115,6 @@ macro_rules! pick {
     (2 => $_1:expr => $me:expr => $_:expr  ) => { $me };
     (3 => $_1:expr => $_2:expr => $me:expr ) => { $me };
 }
-
 
 #[macro_export]
 macro_rules! array_index_by_enum {
@@ -151,7 +147,3 @@ macro_rules! array_index_by_enum {
 
     ($( $_:tt)*) => {}; // End tt-muncher
 }
-
-
-
-
