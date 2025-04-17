@@ -49,18 +49,19 @@ impl<'parsemes, 'filestr> Print for ListReal<'parsemes, 'filestr> {
 
 impl<'shortcuts, 'filestr> Print for ListShortcut<'shortcuts, 'filestr> {
     precalculate_capacity_and_build!(self, buffer {
-        let Shortcut { hotkey, command, .. } = self.0;
+        let Shortcut { hotkey, command, is_placeholder } = self.0;
         let mut hotkey = hotkey.iter();
         let first = hotkey.next().unwrap();
+        let bar_type = if !is_placeholder { '|' } else { '!' };
     } {
-        1 => buffer.push('|');
+        bar_type.len_utf8() => buffer.push(bar_type);
         wrap_chord(first).string_len() => wrap_chord(first).push_string_into(buffer);
         hotkey.map(|chord| wrap_chord(chord).string_len() + 3).sum::<usize>()
             => hotkey.for_each(|chord| {
                 buffer.push_str(" ; ");
                 wrap_chord(chord).push_string_into(buffer);
             });
-        1 => buffer.push('|');
+        bar_type.len_utf8() => buffer.push(bar_type);
         1 => buffer.push(' ');
 
         TrimEscapeStrList(QUOTE, &CANDIDATES, &ESCAPE, command).string_len()

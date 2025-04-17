@@ -66,7 +66,7 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
         entry_head_index: 0,
         entry_body_index: 0,
         member_num: 0,        // index for HChoice/BChoice (to `filter()` on in parser)
-        max_permutes: (0, 0), // (head max, body max)
+        max_permutes: (1, 1), // (head max, body max)
 
         chord_count: (0, 0), // (outside, inside) permute group '{{' '}}'
         body_count: (0, 0),
@@ -94,7 +94,8 @@ pub fn lex(input: &str) -> Result<LexOutput, MarkupError> {
             if let Ok(Some(lexeme)) = fsm.emit_body(&input[fsm.cursor.0..]) {
                 fragments.push(lexeme)
             }
-            fsm.calculate_entry_size(); // @VOLATILE: After the `emit_body()`
+            // True/false does not matter here
+            fsm.calculate_entry_size(false); // @VOLATILE: After `emit_body()`
             Ok(None)
         }
         State::Head if fsm.is_placeholder => fsm
@@ -337,14 +338,13 @@ fn step_body<'a>(fsm: &mut Fsm<'a>, ch: char) -> StepOutput<'a> {
 
         ('\n', Some(c @ '|') | Some(c @ '!')) => {
             fsm.change_state(State::Head);
-            fsm.is_placeholder = c == '!';
 
             // Final newlines will be trimmed at parser stage anyway
             let before_newline = fsm.cursor.move_to(fsm.walker.prev);
             let lexeme = fsm.emit_body(&fsm.original[before_newline]);
             fsm.walker.next(); // Skip '|' or '!'
             fsm.cursor.move_to(fsm.walker.post);
-            fsm.calculate_entry_size(); // @VOLATILE: After `emit_body()`
+            fsm.calculate_entry_size(c == '!'); // @VOLATILE: After `emit_body()`
             lexeme
         }
 
@@ -596,7 +596,7 @@ impl<'a> Fsm<'a> {
     }
 
     #[inline]
-    fn calculate_entry_size(&mut self) {
+    fn calculate_entry_size(&mut self, next_is_placeholder: bool) {
         debug_assert!(self.entry_stats.len() < self.entry_stats.capacity());
         debug_assert!(self.max_permutes.0 >= self.max_permutes.1);
 
@@ -624,6 +624,7 @@ impl<'a> Fsm<'a> {
             tail: self.fragment_len,
         });
 
+        self.is_placeholder = next_is_placeholder;
         self.entry_head_index = self.fragment_len;
         self.max_permutes = (1, 1);
         self.chord_count = (0, 0);
