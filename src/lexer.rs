@@ -247,7 +247,6 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             // Change to State::Body
             let before_bar = fsm.cursor.move_to(fsm.walker.prev);
             let lexeme = fsm.emit_h_chord(&fsm.original[before_bar]);
-            fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
             fsm.mark_body_start(); // @VOLATILE: After `emit_h_chord()`
             lexeme
@@ -263,7 +262,6 @@ fn step_head_placeholder<'a>(fsm: &mut Fsm<'a>, ch: char) -> PassOutput<'a> {
             // Change to State::Body
             let before_exclaim = fsm.cursor.move_to(fsm.walker.prev);
             let lexeme = fsm.emit_h_chord(&fsm.original[before_exclaim]);
-            fsm.walker.eat_separator();
             fsm.cursor.move_to(fsm.walker.post);
             fsm.mark_body_start(); // @VOLATILE: after `emit_p_chord()`
             lexeme
