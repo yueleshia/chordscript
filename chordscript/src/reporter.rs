@@ -145,6 +145,9 @@ impl fmt::Display for MarkupError {
     }
 }
 
+
+// @TODO: Convert this from precalculate... to just using rust built-ins, e.g. format_args!()
+//        This is a one-time cost
 impl Print for MarkupError {
     precalculate_capacity_and_build!(self, buffer {
         let Range { start: begin, end: close } = self.range;

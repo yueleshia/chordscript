@@ -7,12 +7,13 @@
 //#![allow(dead_code)]
 
 mod constants;
-pub mod deserialise;
+mod deserialise;
 mod errors;
 mod macros;
 pub mod parser;
 mod reporter;
 mod structs;
+pub mod templates;
 
 pub use crate::parser::{lexemes, shortcuts, keyspaces};
 
@@ -21,15 +22,12 @@ pub use crate::parser::{lexemes, shortcuts, keyspaces};
  ****************************************************************************/
 #[test]
 fn on_file() {
-    use crate::deserialise::Print;
-    use crate::deserialise::PrintError;
-
     let path = concat!(env!("XDG_CONFIG_HOME"), "/rc/wm-shortcuts");
     let file = std::fs::read_to_string(path).unwrap();
-    let _lexemes = lexemes::lex(&file).or_die(1);
+    let _lexemes = lexemes::lex(&file).unwrap();
     //_lexemes.lexemes.iter().for_each(|l| println!("{:?}", l));
     //println!("\n~~~~~~\n");
-    let _parseme_owner = shortcuts::parse_unsorted(_lexemes).or_die(1);
+    let _parseme_owner = shortcuts::parse_unsorted(_lexemes).unwrap();
     //println!("{}", deserialise::ListAll(&_parseme_owner).to_string_custom());
     let _shortcuts = _parseme_owner.to_iter().collect::<Vec<_>>();
 
@@ -37,14 +35,14 @@ fn on_file() {
     // the quickest check to see if we altered the algorithm significantly
     println!("~~~~\n{}", _shortcuts.len());
     debug_assert_eq!(_shortcuts.len(), 106);
-    deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
-    deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
-    println!("~~~~");
+    //deserialise::ListShortcut(_shortcuts[0].clone()).print_stderr();
+    //deserialise::ListShortcut(_shortcuts.last().unwrap().clone()).print_stderr();
+    //println!("~~~~");
     //let _keyspaces = keyspace::process(&_parseme_owner);
     //println!("{}", deserialise::KeyspacePreview(&_keyspaces).to_string_custom());
 }
 
-//#[test]
+#[test]
 fn _interpret() {
     let _file = r#"
 #
@@ -84,7 +82,8 @@ fn _interpret() {
         //println!("{}", deserialise::I3(&keyspaces).to_string_custom());
         Ok(())
     })() {
-        println!("{}", err);
+        use crate::deserialise::Print;
+        println!("{}", err.to_string_custom());
     }
 }
 

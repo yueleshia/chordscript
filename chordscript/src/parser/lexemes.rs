@@ -503,8 +503,7 @@ impl<'a> Fsm<'a> {
             (a, b) => {
                 let m = format!("Invalid state transition {:?} -> {:?}", a, b);
                 let err = self.walker.error_at_current(m.as_str()).unwrap_err();
-                use crate::deserialise::Print;
-                unreachable!("{}", err.to_string_custom());
+                unreachable!("{:?}", err);
             }
         }
 

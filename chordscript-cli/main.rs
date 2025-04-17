@@ -1,6 +1,6 @@
 use std::fs;
-use chordscript::deserialise::Print;
-use chordscript::parser::keyspaces;
+use chordscript::templates::{Templates, ID_TO_STR, ID_TO_TEMPLATE};
+use chordscript::parser::parse_to_shortcuts;
 
 mod flags {
     #![allow(unused)]
@@ -35,10 +35,19 @@ mod flags {
     }
 }
 
-enum F {
-    DebugShortcuts,
-    Shell,
-    I3,
+#[derive(Debug)]
+enum Runner<'a> {
+    Shell {
+        format: &'static Templates,
+        runner: &'a str,
+    },
+    Native(&'static Templates),
+}
+
+fn template_from_str(format: &str) -> Result<&'static Templates, &str> {
+    ID_TO_STR.iter().position(|s| *s == format)
+        .map(|id| &ID_TO_TEMPLATE[id])
+        .ok_or(format)
 }
 
 //run: cargo run shellrunner i3 a ~/.config/rc/wm-shortcuts
@@ -52,17 +61,18 @@ fn main() {
             flags::ChordscriptCliCmd::Frameworks(_) => {}
 
             _ => {
-                let (framework_str, framework, runner_cmd, filepath) = match &args.subcommand {
+                let (runner, filepath) = match &args.subcommand {
                     flags::ChordscriptCliCmd::Shell(params) => {
-                        ("shell", Ok(F::Shell), None, params.filepath.as_str())
+                        (Ok(Runner::Native(&ID_TO_TEMPLATE[Templates::ShellScript.id()])), params.filepath.as_str())
                     }
                     flags::ChordscriptCliCmd::Native(params) => {
-                        (params.framework.as_str(), Err(params.framework.as_str()), None, params.filepath.as_str())
+                        (template_from_str(&params.framework).map(Runner::Native), params.filepath.as_str())
                     }
                     flags::ChordscriptCliCmd::Shellrunner(params) => (
-                        params.framework.as_str(),
-                        Err(params.framework.as_str()),
-                        Some(params.runner_cmd.as_str()),
+                        template_from_str(&params.framework).map(|format| Runner::Shell {
+                            format,
+                            runner: &params.runner_cmd,
+                        }),
                         params.filepath.as_str(),
                     ),
 
@@ -79,33 +89,19 @@ fn main() {
                     }
                 };
 
-                let ast = chordscript::parser::parse_to_shortcuts(&shortcutrc).unwrap_or_else(|err| {
-                    err.print_stderr();
+                let ast = parse_to_shortcuts(&shortcutrc).unwrap_or_else(|err| {
+                    println!("{:?}", err);
                     std::process::exit(1)
                 });
 
-                let framework = match framework {
-                    Ok(a) => a,
-                    Err("debug-shortcuts") => F::DebugShortcuts,
-                    Err("shell") => F::Shell,
-                    Err("i3") => F::I3,
-                    Err(f) => {
-                        eprintln!("{} is not a suppported framework. Supported frameworks are:\n{}", f, "TODO");
-                        std::process::exit(1)
-                    }
-                };
-                match (framework, runner_cmd) {
-                    (F::DebugShortcuts, _) => chordscript::deserialise::ListAll(&ast).print_stdout(),
-                    (F::Shell, None) => chordscript::deserialise::ListAll(&ast).print_stdout(),
-                    //("i3", None) => chordscript::deserialise::I3(&keyspace::process(&ast)).print_stdout(),
-                    (F::I3, Some(_)) => chordscript::deserialise::I3Shell(&keyspaces::process(&ast)).print_stdout(),
-                    //"keyspace" => chordscript::deser
-                    (_, None) => {
-                        eprintln!("{} must have shell runner.", framework_str);
-                        std::process::exit(1)
-                    }
-                    (_, Some(_)) => {
-                        eprintln!("{} does not a shell runner ", framework_str);
+                let lock = &mut std::io::stdout();
+
+                match runner {
+                    Ok(Runner::Native(format @ Templates::ShellScript)) => format.pipe(&ast, lock).unwrap(),
+                    Ok(Runner::Shell{ format, runner: _ }) => format.pipe(&ast, lock).unwrap(),
+                    Ok(a) => todo!("{:?}", a),
+                    Err(framework) => {
+                        eprintln!("{} is not a suppported framework. Supported frameworks are:\n{}", framework, "TODO");
                         std::process::exit(1)
                     }
                 }
