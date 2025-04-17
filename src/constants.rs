@@ -1,5 +1,24 @@
 //run: cargo test -- --nocapture
 
+macro_rules! map {
+    ($arg:ident : $type:ty |> $i:ident in $from:literal .. $till:expr => {
+        $( $loop_body:stmt );*
+    }) => {
+        {
+            const fn for_loop(mut $arg : $type, $i: usize) -> $type {
+                if $i < $till {
+                    $( $loop_body );*
+                    for_loop($arg, $i + 1)
+                } else {
+                    $arg
+                }
+            }
+            for_loop($arg, $from)
+        }
+    }
+}
+
+
 // https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
 // These contain no semantic meaning in head
 pub const WHITESPACE: [char; 25] = [
@@ -12,30 +31,40 @@ pub const WHITESPACE: [char; 25] = [
 const WHITESPACE_LEN: usize = WHITESPACE.len();
 const SEPARATOR_LEN: usize = WHITESPACE_LEN + 1;
 pub const SEPARATOR: [char; SEPARATOR_LEN] = {
-    let mut base = [' '; SEPARATOR_LEN];
-
-    const fn copy_whitespace_into(mut base: [char; SEPARATOR_LEN], i: usize) -> [char; 26] {
-        if i < WHITESPACE_LEN {
-            base[i] = WHITESPACE[i];
-            copy_whitespace_into(base, i + 1)
-        } else {
-            base
-        }
-    }
-    copy_whitespace_into(base, 0);
-
+    let base = [' '; SEPARATOR_LEN];
+    let mut base = map!(
+        base: [char; SEPARATOR_LEN]
+        |> i in 0..WHITESPACE_LEN => { base[i] = WHITESPACE[i] }
+    );
     // Add these
     base[25] = '+';
     base
 };
 
 #[test]
-fn check_whitespace() {
-    for c in &WHITESPACE {
-        assert!(c.is_whitespace());
-    }
+fn check_keys_are_correct() {
+    assert!(WHITESPACE.iter().all(|c| c.is_whitespace()));
+    assert_eq!(&WHITESPACE, &SEPARATOR[0..WHITESPACE.len()]);
+    assert!(KEYCODES.iter()
+        .chain(MODIFIERS.iter())
+        .all(|k| k.len() <= KEYSTR_UTF8_MAX_LEN));
+    assert!(KEYCODES.iter().chain(MODIFIERS.iter())
+        .any(|k| k.len() == KEYSTR_UTF8_MAX_LEN));
+
+    // Make sure they do not intersect
+    let mut combined = KEYCODES.iter().chain(MODIFIERS.iter()).collect::<Vec<_>>();
+    combined.sort_unstable();
+    let len = combined.len();
+    combined.dedup();
+    assert_eq!(len, combined.len(), "Some keys are specified both in KEYCODES and MODIFIERS");
 }
 
+pub const MODIFIERS: [&str; 4] = [
+    "alt",
+    "ctrl",
+    "shift",
+    "super",
+];
 
 pub const KEYCODES: [&str; 39] = [
     "0",
@@ -78,6 +107,26 @@ pub const KEYCODES: [&str; 39] = [
     "Space",
     "Return",
 ];
+
+pub const KEYSTR_UTF8_MAX_LEN: usize = {
+    let max_len = 0;
+    let max_len = map!(
+        max_len: usize
+        |> i in 0..KEYCODES.len() => {
+            if KEYCODES[i].len() > max_len {
+                max_len = KEYCODES[i].len()
+            }
+        }
+    );
+    map!(
+        max_len: usize
+        |> i in 0..MODIFIERS.len() => {
+            if MODIFIERS[i].len() > max_len {
+                max_len = MODIFIERS[i].len()
+            }
+        }
+    )
+};
 
 #[test]
 fn is_keycodes_sorted_and_unique() {

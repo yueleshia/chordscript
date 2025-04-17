@@ -2,7 +2,7 @@
 
 use crate::errors::MarkupLineError;
 use crate::messages;
-use crate::constants::{WHITESPACE, SEPARATOR};
+use crate::constants::{MODIFIERS, KEYCODES, SEPARATOR, KEYSTR_UTF8_MAX_LEN};
 use super::DEV_PRINT;
 
 
@@ -10,9 +10,9 @@ use super::DEV_PRINT;
  * Macros
  */
 macro_rules! devprint {
-    ($fmt:literal, $var:expr) => {
+    ($fmt:literal, $($var:expr),*) => {
         if DEV_PRINT {
-            println!($fmt, $var);
+            println!($fmt, $($var),*);
         }
     };
 }
@@ -20,9 +20,13 @@ macro_rules! devprint {
 macro_rules! define_syntax {
     ($count_fsm:ident, $lex_fsm:ident, $tokens:ident,
         $($state:ident {
-            $($pat:pat $(if $if_pat:expr)? => $counter:expr, $runner:expr;)*
-        })*) =>
-    {
+            $(
+                $( $pattern:pat )|+ $( if $guard:expr )? =>
+                $counter:expr,
+                $runner:expr;
+            )*
+        })*
+    ) => {
         enum State {
             $($state,)*
         }
@@ -34,7 +38,7 @@ macro_rules! define_syntax {
         ) -> LexerCapacities {
             match $count_fsm.state {
                 $(State::$state => match item {
-                    $($pat $(if $if_pat)* => $counter,)*
+                    $( $( $pattern )|+ $( if $guard )? => $counter,)*
                 },)*
             }
         }
@@ -46,7 +50,7 @@ macro_rules! define_syntax {
         ) {
             match $lex_fsm.state {
                 $(State::$state => match item {
-                    $($pat $(if $if_pat)* => $runner,)*
+                    $( $( $pattern )|+ $( if $guard )? => $runner, )*
                 },)*
             }
         }
@@ -58,23 +62,28 @@ macro_rules! define_syntax {
  * Syntax
  */
 #[derive(Debug)]
-pub enum HeadLexeme<'a> {
-    Key(&'a str),
-    Separator,
+pub enum HeadLexeme {
+    Key(usize),
+    Mod(usize),
+    ChordDelim,
+    ChoiceDelim,
     Blank,
-    GroupBegin,
-    GroupClose,
+    ChoiceBegin,
+    ChoiceClose,
 }
 #[derive(Debug)]
 pub enum BodyLexeme<'a> {
     Section(&'a str),
     Separator,
-    GroupBegin,
-    GroupClose,
+    ChoiceBegin,
+    ChoiceClose,
 }
 
 define_syntax! { count_fsm, lex_fsm, tokens,
     Head {
+        (',', _, _) => panic!(messages::HEAD_COMMA_OUTSIDE_BRACKETS), {};
+        ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
+
         ('|', index, _) =>
             {
                 devprint!("head |{:?}| 1", count_fsm.cursor_move_to(index));
@@ -104,40 +113,42 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 lex_fsm.next(); // Skip second '{'
                 lex_fsm.eat_charlist(&SEPARATOR);
                 lex_fsm.cursor_move_to(lex_fsm.rindex);
-                tokens.heads.push(HeadLexeme::GroupBegin);
+                tokens.heads.push(HeadLexeme::ChoiceBegin);
                 lex_fsm.state = State::HeadBrackets;
             };
-        (';', index, _) =>
+
+        (ch, index, _) if ch == ';' || SEPARATOR.contains(&ch) =>
             {
-                devprint!("head |{:?}| 2", count_fsm.cursor_move_to(index));
+                let capacity = match ch {
+                    ';' => (0, 2, 0),
+                    _ => (0, 1, 0),
+                };
+                devprint!("head |{:?}| {}", count_fsm.cursor_move_to(index), capacity.1);
                 count_fsm.eat_charlist(&SEPARATOR);
-                (0, 2, 0)
+                capacity
             }, {
                 let keystr = lex_fsm.cursor_move_to(index);
                 tokens.head_push_key(keystr);
                 lex_fsm.eat_charlist(&SEPARATOR);
                 lex_fsm.cursor_move_to(lex_fsm.rindex);
-                tokens.heads.push(HeadLexeme::Separator);
+                match ch {
+                    ';' => tokens.heads.push(HeadLexeme::ChordDelim),
+                    _ => {}
+                }
             };
 
 
-        (ch, index, _) if SEPARATOR.contains(&ch) =>
-            {
-                devprint!("head |{:?}| 1", count_fsm.cursor_move_to(index));
-                count_fsm.eat_charlist(&WHITESPACE);
-                (0, 1, 0)
-            }, {
-                let keystr = lex_fsm.cursor_move_to(index);
-                tokens.head_push_key(keystr);
-                lex_fsm.eat_charlist(&WHITESPACE);
-                lex_fsm.cursor_move_to(lex_fsm.rindex);
-            };
-
-        (',', _, _) => panic!(messages::HEAD_COMMA_OUTSIDE_BRACKETS), {};
-        _ => (0, 0, 0), {};
+        (_, _index, _) => (0, 0, 0), {
+            if lex_fsm.cursor_width(_index) > KEYSTR_UTF8_MAX_LEN {
+                panic!("Panic at the disco")
+            }
+        };
     }
 
     HeadBrackets {
+        ('|', _, _) => panic!(messages::HEAD_INVALID_CLOSE), {};
+        ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
+
         ('}', index, _) =>
             {
                 if let Some(('}', _, _)) = count_fsm.next() { // second '}'
@@ -155,12 +166,32 @@ define_syntax! { count_fsm, lex_fsm, tokens,
                 lex_fsm.next(); // Skip second '}'
                 lex_fsm.eat_charlist(&SEPARATOR);
                 lex_fsm.cursor_move_to(lex_fsm.rindex);
-                tokens.heads.push(HeadLexeme::GroupClose);
+                tokens.heads.push(HeadLexeme::ChoiceClose);
                 lex_fsm.state = State::Head;
             };
 
-        ('|', _, _) => panic!(messages::HEAD_INVALID_CLOSE), {};
-        ('\\', _, _) => panic!(messages::HEAD_NO_ESCAPING), {};
+        (ch, index, _) if ch == ';' || ch == ',' || SEPARATOR.contains(&ch) =>
+            {
+                let capacity = match ch {
+                    ';' => (0, 2, 0),
+                    ',' => (0, 2, 0),
+                    _ => (0, 1, 0),
+                };
+                devprint!("head |{:?}| {}", count_fsm.cursor_move_to(index), capacity.1);
+                count_fsm.eat_charlist(&SEPARATOR);
+                capacity
+            }, {
+                let keystr = lex_fsm.cursor_move_to(index);
+                tokens.head_push_key(keystr);
+                lex_fsm.eat_charlist(&SEPARATOR);
+                lex_fsm.cursor_move_to(lex_fsm.rindex);
+                match ch {
+                    ';' => tokens.heads.push(HeadLexeme::ChordDelim),
+                    ',' => tokens.heads.push(HeadLexeme::ChoiceDelim),
+                    _ => {}
+                }
+            };
+
         _ => (0, 0, 0), {};
     }
 
@@ -242,7 +273,7 @@ type LexerCapacities = (usize, usize, usize);
 // TODO: implement iterator and make these not public
 pub struct LexemeLists<'a> {
     pub entries: Vec<(usize, usize)>,
-    pub heads: Vec<HeadLexeme<'a>>,
+    pub heads: Vec<HeadLexeme>,
     pub bodys: Vec<BodyLexeme<'a>>,
 }
 
@@ -254,16 +285,19 @@ impl<'a> LexemeLists<'a> {
             bodys: Vec::with_capacity(capacity.2),
         }
     }
+
     fn head_push_key(&mut self, keystr: &'a str) {
         if keystr.is_empty() {
             self.heads.push(HeadLexeme::Blank);
+        } else if let Some(i) = MODIFIERS.iter().position(|x| *x == keystr) {
+            self.heads.push(HeadLexeme::Mod(i));
+        } else if let Some(i) = KEYCODES.iter().position(|x| *x == keystr) {
+            self.heads.push(HeadLexeme::Key(i));
         } else {
-            self.heads.push(HeadLexeme::Key(keystr));
+            panic!("Invalid key. {} ", keystr)
         }
     }
 }
-
-
 
 struct FileIter<'a> {
     source: &'a str,
@@ -273,7 +307,6 @@ struct FileIter<'a> {
     rest: &'a str,
     rindex: usize,
     cursor: usize,
-    cursor_width: usize,
 }
 impl<'a> FileIter<'a> {
     fn new(source: &'a str) -> Self {
@@ -287,13 +320,17 @@ impl<'a> FileIter<'a> {
             peek,
             rindex: 0,
             cursor: 0,
-            cursor_width: 0,
         }
     }
     fn cursor_move_to(&mut self, index: usize) -> &'a str {
+        debug_assert!(index >= self.cursor);
         let from = self.cursor;
         self.cursor = index;
         &self.source[from..index]
+    }
+
+    fn cursor_width(&mut self, index: usize) -> usize {
+        index - self.cursor
     }
 
     fn eat_charlist(&mut self, list: &[char]) {
@@ -311,8 +348,9 @@ impl<'a> Iterator for FileIter<'a> {
     type Item = (char, usize, &'a str);
     fn next(&mut self) -> Option<Self::Item> {
         let item  = (self.peek?, self.rindex, self.rest);
+        let len_utf8 = item.0.len_utf8();
         self.rest = self.walker.as_str();
-        self.rindex += item.0.len_utf8();
+        self.rindex += len_utf8;
         self.peek = self.walker.next();
         Some(item)
     }
